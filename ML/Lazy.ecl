@@ -42,9 +42,10 @@ EXPORT Lazy:= MODULE
 /*
   Nearest Neighbors Search could be done using different algorithms:
     Linear Search
-    KDTree Search
+    KDTree Search   (Implemented here)
     BallTree Search
-  Thus we create NearestNeighborsSearch as Virtual, all of them need to implement the algorithm in SearchC.
+    CoverTree
+  Thus we create NearestNeighborsSearch as Virtual, all of them need to implement the algorithm in SearchC and return K-Nearest Neighbors
 */
     EXPORT NearestNeighborsSearch := MODULE,VIRTUAL
       EXPORT MajorityVote(DATASET(NN) NNeighbors ,DATASET(Types.DiscreteField) depData):= FUNCTION
