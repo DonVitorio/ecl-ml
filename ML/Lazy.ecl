@@ -39,7 +39,7 @@ EXPORT Lazy:= MODULE
       BOOLEAN isTerminal:=    FALSE;        // isTerminal flag
     END;
 
-    EXPORT NearestNeighborSearch := MODULE,VIRTUAL
+    EXPORT NearestNeighborsSearch := MODULE,VIRTUAL
       EXPORT MajorityVote(DATASET(NN) NNeighbors ,DATASET(Types.DiscreteField) depData):= FUNCTION
         allClass:=JOIN(depData, NNeighbors, LEFT.id=RIGHT.id, TRANSFORM(Types.NumericField, SELF.id:= RIGHT.qp_id, SELF.number:=LEFT.number, SELF.value:= LEFT.value));
         cntclass:= TABLE(allClass,{id, number, value, cnt:= COUNT(GROUP)}, id, number, value);
@@ -58,7 +58,7 @@ EXPORT Lazy:= MODULE
       END;
     END;
     
-    EXPORT KDTreeNNSearch(Trees.t_level Depth=10,Trees.t_level MedianDepth=0) := MODULE(NearestNeighborSearch)
+    EXPORT KDTreeNNSearch(Trees.t_level Depth=10,Trees.t_level MedianDepth=0) := MODULE(NearestNeighborsSearch)
       EXPORT NNSearch(DATASET(Types.NumericField) queryPointsData, DATASET(Trees.Node) KDTFullTree, DATASET(Trees.Node) KDTPartitioned, DATASET(Trees.sNode) KDTBoundaries) := MODULE    
         SHARED root:= KDTFullTree(node_id =1);
         SHARED queryPoints(DATASET(Types.NumericField) qp_ids):= FUNCTION
