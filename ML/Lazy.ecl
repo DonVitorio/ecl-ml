@@ -39,6 +39,13 @@ EXPORT Lazy:= MODULE
       BOOLEAN isTerminal:=    FALSE;        // isTerminal flag
     END;
 
+/*
+  Nearest Neighbors Search could be done using different algorithms:
+    Linear Search
+    KDTree Search
+    BallTree Search
+  Thus we create NearestNeighborsSearch as Virtual, all of them need to implement the algorithm in SearchC.
+*/
     EXPORT NearestNeighborsSearch := MODULE,VIRTUAL
       EXPORT MajorityVote(DATASET(NN) NNeighbors ,DATASET(Types.DiscreteField) depData):= FUNCTION
         allClass:=JOIN(depData, NNeighbors, LEFT.id=RIGHT.id, TRANSFORM(Types.NumericField, SELF.id:= RIGHT.qp_id, SELF.number:=LEFT.number, SELF.value:= LEFT.value));
