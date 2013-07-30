@@ -1,4 +1,4 @@
-//---------------------------------------------------------------------------
+﻿//---------------------------------------------------------------------------
 // Macro takes a matrix dataset, with each row contianing an ID and one or
 // more axis fields containing numeric values, and expands it into the 
 // NumericField format used by ML.

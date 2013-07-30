@@ -610,6 +610,8 @@ The model  is used to predict the class from new examples.
 	EXPORT DecisionTree := MODULE
 		EXPORT model_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'new_node_id','5'}], {STRING orig_name; STRING assigned_name;});
 		EXPORT STRING model_fields := 'node_id,level,number,value,new_node_id';	// need to use field map to call FromField later
+		EXPORT modelC_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'high_fork','5'},{'new_node_id','6'}], {STRING orig_name; STRING assigned_name;});
+		EXPORT STRING modelC_fields := 'node_id,level,number,value,high_fork,new_node_id';	// need to use field map to call FromField later
 		SHARED GenClassifyD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
 			ML.FromField(mod, Trees.SplitF, nodes, model_Map);	// need to use model_Map previously build when Learning (ToField)
 			leafs := nodes(new_node_id = 0);	// from final nodes
@@ -662,8 +664,23 @@ The model  is used to predict the class from new examples.
 				RETURN GenModel(mod);
 			END;
 		END;
-	END; // DecisionTree Module
 	
+		EXPORT C45Binary(t_Count minNumObj=2, ML.Trees.t_level maxLevel=32) := MODULE(DEFAULT)
+			EXPORT LearnC(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
+				nodes := Trees.SplitBinaryCBased(Indep, Dep, minNumObj, maxLevel);
+				AppendID(nodes, id, model);
+				ToField(model, out_model, id, modelC_fields);
+				RETURN out_model;
+			END;
+			EXPORT ClassifyD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
+				RETURN GenClassifyD(Indep,mod);
+			END;
+			EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
+				ML.FromField(mod, Trees.SplitC, o, modelC_Map);
+        RETURN o;
+			END;
+		END;
+	END; // DecisionTree Module
 	
 /* From http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#overview
    "... Random Forests grows many classification trees.
@@ -692,7 +709,7 @@ Configuration Input
 			AppendID(nodes, id, model);
 			ToField(model, out_model, id, model_fields);
 			RETURN out_model;
-		END;
+		END;   
 		EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
 			ML.FromField(mod, Trees.gSplitF, o, model_Map);
 			RETURN o;
