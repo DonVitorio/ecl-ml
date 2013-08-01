@@ -672,9 +672,19 @@ The model  is used to predict the class from new examples.
 				ToField(model, out_model, id, modelC_fields);
 				RETURN out_model;
 			END;
-			EXPORT ClassifyD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
-				RETURN GenClassifyD(Indep,mod);
-			END;
+			EXPORT ClassifyC(DATASET(Types.NumericField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
+        ML.FromField(mod, Trees.SplitC, nodes, modelC_Map);	// need to use model_Map previously build when Learning (ToField)
+        leafs := nodes(new_node_id = 0);	// from final nodes
+        splitData:= Trees.SplitBinInstances(nodes, Indep);
+        l_result final_class(RECORDOF(splitData) l, RECORDOF(leafs) r ):= TRANSFORM
+          SELF.id 		:= l.id;
+          SELF.number	:= 1;
+          SELF.value	:= r.value;
+          SELF.conf				:= 0;		// added to fit in l_result, not used so far
+          SELF.closest_conf:= l.new_node_id;	// added to fit in l_result, not used so far
+        END;
+        RETURN JOIN(splitData, leafs, LEFT.new_node_id = RIGHT.node_id, final_class(LEFT, RIGHT), LOOKUP);
+      END;
 			EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
 				ML.FromField(mod, Trees.SplitC, o, modelC_Map);
         RETURN o;
