@@ -1,7 +1,7 @@
 IMPORT * FROM ML;
 IMPORT ML.Tests.Explanatory as TE;
 
-Depth:= 10;
+Depth:= 4;
 MedianDepth:= 15;
 
 indep_data:= TABLE(TE.MonkDS.Train_Data,{id, a1, a2, a3, a4, a5, a6});
@@ -19,18 +19,18 @@ depData := ML.Discretize.ByRounding(pr_dep);
 depTest := ML.Discretize.ByRounding(pr_depT);
 
 
-iknn:= Lazy.KNN_KDTree(5);
+iknn:= Lazy.KNN_KDTree(3);
 
-TestModule:=  iknn.TestC(IndepTest, depTest);
-TestModule.Raw;
-TestModule.CrossAssignments;
-TestModule.PrecisionByClass;
-TestModule.Headline;
+// TestModule:=  iknn.TestC(IndepTest, depTest);
+// TestModule.Raw;
+// TestModule.CrossAssignments;
+// TestModule.PrecisionByClass;
+// TestModule.Headline;
 
 computed:=  iknn.ClassifyC(IndepData, depData, IndepTest);
-Comparison:=  ML.Classify.Compare(depTest, computed);
+// Comparison:=  ML.Classify.Compare(depTest, computed);
 computed;
-Comparison.Raw;
-Comparison.CrossAssignments;
-Comparison.PrecisionByClass;
-Comparison.Headline;
+// Comparison.Raw;
+// Comparison.CrossAssignments;
+// Comparison.PrecisionByClass;
+// Comparison.Headline;
