@@ -857,13 +857,27 @@ EXPORT Trees := MODULE
     nodes_level:= nodes(level = p_level);
     this_set := DISTRIBUTE(nodes_level, HASH(node_id, number));
     root_sorted := SORT(this_set, node_id, number, value, depend, LOCAL);
-    // Calculating Information Entropy of Nodes before split
-    node_dep := TABLE(root_sorted(number=1), {node_id, depend, high_fork, cnt:= COUNT(GROUP)}, node_id, depend, high_fork, FEW);
-    node_dep_tot := TABLE(node_dep, {node_id, tot:= SUM(GROUP, cnt), numclass:= COUNT(GROUP), Real minSplit:= MIN(25,MAX(minNumObj, 0.1*(SUM(GROUP, cnt)/COUNT(GROUP))))}, node_id, FEW);
-    // NoSplit Nodes: nodes with not enough instances to be split
+    // All attributes have same class distribution, pick just "1"
+    // cNode1:= RECORD
+      // node_id := root_sorted.node_id;
+      // level   := root_sorted.level;
+      // depend  := root_sorted.depend;
+      // id      := root_sorted.id;
+      // number  := root_sorted.number;
+      // value   := root_sorted.value;
+      // high_fork := root_sorted.high_fork;
+    // END;    
+    //    attrib1:= TABLE(root_sorted(number=1), cNode1);
+    attrib1:= root_sorted(number=1);
+    node_dep := TABLE(attrib1, {node_id, depend, high_fork, cnt:= COUNT(GROUP)}, node_id, depend, high_fork, FEW);
+    // Calculating total count and minSplit(minimun number of instances per Split) parameter values  for each node
+    node_dep_tot := TABLE(node_dep, {node_id, tot:= SUM(GROUP, cnt), numclass:= COUNT(GROUP), REAL minSplit:= MIN(25,MAX(minNumObj, 0.1*(SUM(GROUP, cnt)/COUNT(GROUP))))}, node_id, FEW);
+    // Propagating total and minSplit to every row per class
+    node_dep_all := JOIN(node_dep, node_dep_tot, LEFT.node_id = RIGHT.node_id); 
+    // NoSplit Nodes: nodes with not enough instances to be split or with only one class value
     root_noSplit := node_dep_tot(tot < (2*minSplit) OR numclass =1);
     root_NoSplit_node := DEDUP(SORT(JOIN(root_noSplit, node_dep, LEFT.node_id = RIGHT.node_id, TRANSFORM(RIGHT), MANY LOOKUP), node_id, -cnt), node_id);
-    //Transforming NoSplit Nodes into LEAF Nodes to return
+    // Transforming NoSplit Nodes into LEAF Nodes to return
     pass_pure_NoSplit:= PROJECT(root_NoSplit_node, TRANSFORM(cNode, SELF.id:= 0, SELF.number:= 0, SELF.value:= 0, SELF.level:= p_level, SELF:=LEFT));
     // Calculating Information Entropy of Nodes before split, continue
     tdp := RECORD
@@ -875,40 +889,87 @@ EXPORT Trees := MODULE
     node_dep_p:= JOIN(node_dep, node_dep_tot, LEFT.node_id = RIGHT.node_id, 
         TRANSFORM(tdp, SELF.prop:= LEFT.cnt/RIGHT.tot, SELF.plogp:= P_LOG_P(LEFT.cnt/RIGHT.tot), SELF:=LEFT), LOOKUP);     
     // Information Entropy of nodes before split
-    node_entropy := TABLE(node_dep_p, {node_id, info:= SUM(GROUP, plogp)}, node_id, MERGE); 
+    node_entropy := TABLE(node_dep_p, {node_id, info:= SUM(GROUP, plogp)}, node_id);
     // Compact Impure Node's data to unique node-attribute values
-    root_impure:= JOIN(root_sorted, root_noSplit, LEFT.node_id = RIGHT.node_id, TRANSFORM(LEFT), LEFT ONLY, LOOKUP);
-    root_acc   := TABLE(root_impure, {node_id, number, value, cnt:=COUNT(GROUP)}, node_id, number, value, LOCAL);
-    r_compact  := PROJECT(root_acc, TRANSFORM({t_node node_id, t_FieldNumber number, t_FieldReal cut}, SELF.cut:=LEFT.value, SELF:= LEFT), LOCAL);
-    // Labeling every node-attribute-value to belong to low or high branch (bynary split) for each cutpoint generated
-    root_bagged:= JOIN(root_impure, r_compact, LEFT.node_id= RIGHT.node_id AND LEFT.number = RIGHT.number, 
-        TRANSFORM({root_impure, ML.Types.t_FieldReal cut, BOOLEAN high_branch}, SELF.cut:= RIGHT.cut, SELF.high_branch:= LEFT.value > RIGHT.cut, SELF:= LEFT), LOCAL);
-    // Calculating ocurrences on root bags, by dependent and total.
-    bag_grouped:= TABLE(root_bagged, {node_id, number, cut, high_fork, high_branch, depend, cnt:= COUNT(GROUP)},node_id, number, cut, high_fork, high_branch, depend, UNSORTED, LOCAL);
-    bag_tot:= TABLE(bag_grouped, {node_id, number, cut, high_branch, tot := SUM(GROUP,cnt)}, node_id, number, cut, high_branch, LOCAL);
-    // attach minimun number of object in a bag per node, from node_dep_tot
-    bag_totMinSplit:=JOIN(bag_tot, node_dep_tot, LEFT.node_id=RIGHT.node_id,TRANSFORM({bag_tot, INTEGER minSplit},SELF:= LEFT, SELF.minSplit:=RIGHT.minSplit), LOOKUP);    
-    // Filtering splits that generate branches with less ocurrences than minNumObjbags_noMin:= bag_tot(tot < minNumObj);
-    bags_noMin:= bag_totMinSplit(tot < minSplit);  
-    bag_tot_ok := JOIN(bag_tot, bags_noMin, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.cut = RIGHT.cut, LEFT ONLY, LOOKUP);
-    bag_count := TABLE(bag_tot_ok(high_branch = true), {node_id, number, bagCnt:= COUNT(GROUP)}, node_id, number, LOCAL);
-    MDLcorrection:= JOIN(bag_count, node_dep_tot, LEFT.node_id=RIGHT.node_id, TRANSFORM({bag_Count, REAL IGpenalty}, SELF.IGpenalty:= (LOG(LEFT.bagCnt)/LOG(2))/RIGHT.tot, SELF:=LEFT), LOOKUP);
+    root_impure_all:= JOIN(root_sorted, root_noSplit, LEFT.node_id = RIGHT.node_id, TRANSFORM(LEFT), LEFT ONLY, LOOKUP);
+    root_acc_dep := DISTRIBUTE(TABLE(root_impure_all, {node_id, number, value, depend, depcnt:=COUNT(GROUP)}, node_id, number, value, depend, MERGE), HASH(node_id, number));
+    root_acc:= TABLE(root_acc_dep, {node_id, number, value, cut_cnt:=SUM(GROUP, depcnt)}, node_id, number, value, MERGE);
+    rec_cut:= RECORD
+       root_acc;
+       INTEGER tot_Low:=0;
+       INTEGER tot_High:=0;
+       INTEGER tot:=0;
+       REAL minSplit;
+       REAL split_Info:=0; // Intrinsic Information Entropy of splits
+		END;
+    cuts:= JOIN(root_acc, node_dep_tot, LEFT.node_id = RIGHT.node_id, TRANSFORM(rec_cut,SELF:=LEFT, SELF:= RIGHT), LOOKUP);  
+    sort_acc:= SORT(cuts, node_id, number, value, LOCAL);
+		rec_cut rol(sort_acc le, sort_acc ri) := TRANSFORM
+      t_low:=   ri.cut_Cnt + IF(le.node_id=ri.node_id AND le.number=ri.number , le.tot_Low, 0);
+      t_high:=  ri.tot - ri.cut_Cnt - IF(le.node_id=ri.node_id AND le.number=ri.number , le.tot_Low, 0);
+      p_low:=   t_low/ri.tot;
+      p_high:=  t_high/ri.tot;
+      SELF.tot_Low:= t_low;
+      SELF.tot_High:= t_high;
+      SELF.split_Info:= P_Log_P(p_low) + P_Log_P(p_high);
+		  SELF := ri;
+		END;
+		x := ITERATE(sort_acc, rol(LEFT,RIGHT), LOCAL);    
+    cuts_ok:= x((tot_Low >= minSplit) AND (tot_High >= minSplit));
+    nodes_ok:= TABLE(cuts_ok, {node_id}, node_id, MERGE);
+    cuts_noSplit:= TABLE(x((tot_Low < minSplit ) OR (tot_High < minSplit)), {node_id}, node_id, MERGE);
     // Nodes with none acceptable splits become LEAFS
-    node_noSplit:= TABLE(JOIN(bags_noMin, bag_tot_ok, LEFT.node_id=RIGHT.node_id, LEFT ONLY, LOOKUP), {node_id}, node_id, MERGE);
-    noSplit_dep := DEDUP(SORT(JOIN(node_noSplit, node_dep, LEFT.node_id = RIGHT.node_id, TRANSFORM(RIGHT)), node_id, -cnt), node_id);
-    pass_thru_noSplit:= PROJECT(noSplit_dep, TRANSFORM(cNode, SELF.level:= p_level, SELF:=LEFT, SELF:=[]));   
-    // Splitting the instances that did not reach a leaf node
+    node_noSplit:= JOIN(cuts_noSplit, nodes_ok, LEFT.node_id=RIGHT.node_id, LEFT ONLY, LOOKUP);  
+    noSplit_dep := DEDUP(SORT(JOIN(node_noSplit, node_dep, LEFT.node_id = RIGHT.node_id, TRANSFORM(RIGHT), LOOKUP), node_id, -cnt), node_id);
+    pass_thru_noSplit:= PROJECT(noSplit_dep, TRANSFORM(cNode, SELF.level:= p_level, SELF:=LEFT, SELF:=[]));     
+    bag_count := TABLE(cuts_ok, {node_id, number, bagCnt:= COUNT(GROUP)}, node_id, number, LOCAL);
+    MDLcorrection:= JOIN(bag_count, node_dep_tot, LEFT.node_id=RIGHT.node_id, TRANSFORM({bag_Count, REAL IGpenalty}, SELF.IGpenalty:= (LOG(LEFT.bagCnt)/LOG(2))/RIGHT.tot, SELF:=LEFT), LOOKUP);
+    rec_dep:= RECORD
+       root_acc_dep;
+       INTEGER tot_Low:=0;
+       INTEGER tot_High:=0;
+       INTEGER tot_Dep:=0;
+       INTEGER tot_Node:=0;
+       REAL minSplit;
+		END;
+    rec_dep pop_dep(root_acc_dep le, node_dep_all ri):= TRANSFORM
+      SELF.depend:=   ri.depend;
+      SELF.depcnt:=   IF(le.depend= ri.depend, le.depcnt, 0);
+      SELF.tot_Dep:=  ri.cnt;
+      SELF.tot_Node:= ri.tot;
+      SELF:=          le;
+      SELF:=          ri;
+    END;
+    deps:= JOIN(root_acc_dep, node_dep_all, LEFT.node_id = RIGHT.node_id, pop_dep(LEFT, RIGHT), LOOKUP);
+    sort_deps:= SORT(deps, node_id, number, depend, value, LOCAL);
+    rec_dep rold(sort_deps le, sort_deps ri) := TRANSFORM
+      SELF.tot_Low:= ri.depCnt + IF(le.node_id=ri.node_id AND le.number=ri.number AND le.depend=ri.depend , le.tot_Low, 0);
+      SELF.tot_High:= ri.tot_dep - ri.depCnt - IF(le.node_id=ri.node_id AND le.number=ri.number AND le.depend=ri.depend, le.tot_Low, 0);
+		  SELF := ri;
+		END;
+    bag_grouped := ITERATE(sort_deps, rold(LEFT,RIGHT), LOCAL);
     bag_dep := RECORD
       bag_grouped;
-      REAL4 prop; // Proportion pertaining to dependant value
-      REAL4 plogp:= 0;
+      REAL4 prop_low; // Proportion pertaining to dependant value
+      REAL4 plogp_low:= 0;
+      REAL4 prop_high; // Proportion pertaining to dependant value
+      REAL4 plogp_high:= 0;
     END;
     // Information Entropy of new branches per split
-    bag_gprop:= JOIN(bag_grouped, bag_tot_ok, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.cut = RIGHT.cut AND LEFT.high_branch = RIGHT.high_branch,
-        TRANSFORM(bag_dep, SELF.prop := LEFT.cnt/RIGHT.tot, SELF.plogp:= P_LOG_P(LEFT.cnt/RIGHT.tot), SELF:=LEFT), HASH);
-    bag_gplogp := TABLE(bag_gprop, {node_id, number, cut, high_branch, cont:= SUM(GROUP,cnt), inf0:= SUM(GROUP, plogp)}, node_id, number, cut, high_branch, LOCAL);
+    bag_gprop:= JOIN(bag_grouped, cuts_ok, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value = RIGHT.value,
+        TRANSFORM(bag_dep, SELF.prop_low := LEFT.tot_low/RIGHT.tot_low, SELF.plogp_low:= P_LOG_P(LEFT.tot_low/RIGHT.tot_low),
+                  SELF.prop_high := LEFT.tot_high/RIGHT.tot_high, SELF.plogp_high:= P_LOG_P(LEFT.tot_high/RIGHT.tot_high), SELF:=LEFT), HASH);
+    bag_gplogp := TABLE(bag_gprop, {node_id, number, value, cont_low:= SUM(GROUP, tot_low), inf_low:= SUM(GROUP, plogp_low),
+                                    cont_high:= SUM(GROUP, tot_high), inf_high:= SUM(GROUP, plogp_high), tot_node}, node_id, number, value, LOCAL);
     // Information Entropy of possible splits per node
-    bags_Entropy := TABLE(bag_gplogp, {node_id, number, cut, info:=SUM(GROUP, cont*inf0)/SUM(GROUP, cont)}, node_id, number, cut, LOCAL);
+    bag_info := RECORD
+      t_node node_id;
+      t_FieldNumber number;
+      t_FieldReal value;
+      t_FieldReal info;
+    END;
+    bags_Entropy:=PROJECT(bag_gplogp, TRANSFORM(bag_info, SELF.info:= (LEFT.cont_low/LEFT.tot_node)*LEFT.inf_low 
+                                    + (LEFT.cont_high/LEFT.tot_node)*LEFT.inf_high, SELF:=LEFT), LOCAL);
     // Calculating Information Gain of possible splits
     bag_gr := RECORD
       bags_Entropy;
@@ -919,42 +980,25 @@ EXPORT Trees := MODULE
         TRANSFORM(bag_gr, SELF.gain:= RIGHT.info - LEFT.info , SELF:= LEFT), LOOKUP);
     // Selecting the split with max Info Gain per bag
     bagSplit:= DEDUP(SORT(bags_gain, node_id, number, -gain, LOCAL), node_id, number, LOCAL);
-    bagsplit_MDL:= JOIN(bagSplit, MDLcorrection, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number, TRANSFORM(bag_gr, SELF.gain:=LEFT.gain-RIGHT.IGpenalty, SELF:=LEFT));
+
+    bagsplit_MDL:= JOIN(bagSplit, MDLcorrection, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number, TRANSFORM(bag_gr, SELF.gain:=LEFT.gain-RIGHT.IGpenalty, SELF:=LEFT), LOCAL);
+    //OUTPUT(bagsplit_MDL, ALL, NAMED('bagsplit_MDL'));
     bagsplit_MDL_acc:=TABLE(bagsplit_MDL,{node_id, posCnt:=COUNT(GROUP, gain>0), totCnt:=COUNT(GROUP)},node_id);
     node_noMDL:=PROJECT(bagsplit_MDL_acc(posCnt=0), TRANSFORM({t_node node_id}, SELF:= LEFT));
     // Nodes with none acceptable MDL become LEAFS
     noMDL_dep := DEDUP(SORT(JOIN(node_noMDL, node_dep, LEFT.node_id = RIGHT.node_id, TRANSFORM(RIGHT)), node_id, -cnt), node_id);
     pass_thru_noMDL:= PROJECT(noMDL_dep, TRANSFORM(cNode, SELF.level:= p_level, SELF:=LEFT, SELF:=[]));
-    // Intrinsic Information Entropy of splits
-    bag_sp := RECORD
-      bag_tot;
-      REAL4 prop; // Proportion of number of instances
-      REAL4 plogp;
-    END;
-    bagSplit_tot:= JOIN(bag_tot_ok, bagsplit_MDL(gain > 0), LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.cut = RIGHT.cut, TRANSFORM(LEFT), LOCAL);
-    bagSplit_p:= JOIN(bagSplit_tot, node_dep_tot, LEFT.node_id = RIGHT.node_id,
-        TRANSFORM(bag_sp, SELF.prop:= LEFT.tot/RIGHT.tot, SELF.plogp:= P_LOG_P(LEFT.tot/RIGHT.tot), SELF:=LEFT), LOOKUP);
-    bagSplit_Intrinsic:= TABLE(bagSplit_p, {node_id, number, cut, split_info:=SUM(GROUP, plogp)},node_id, number, cut, LOCAL); // Intrinsic Info
-    // Information Gain Ratio of possible splits per node
-    bagSplit_gRatio := JOIN(bagsplit_MDL(gain > 0), bagSplit_Intrinsic, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.cut=RIGHT.cut, 
-        TRANSFORM(bag_gr, SELF.g_ratio:= LEFT.gain/RIGHT.split_info, SELF:= LEFT), LOCAL);
-    // Selecting the split with max Info Gain Ratio per node
+    bagSplit_gRatio := JOIN(cuts_ok, bagsplit_MDL(gain > 0), LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.value, 
+        TRANSFORM(bag_gr, SELF.info:= LEFT.split_info, SELF.g_ratio:= RIGHT.gain/LEFT.split_info, SELF:= RIGHT), LOCAL);
     node_splits:= DEDUP(SORT(bagSplit_gRatio, node_id, -g_ratio), node_id);
-//    chk_splits := JOIN(bag_grouped, node_splits, LEFT.node_id = RIGHT.node_id AND LEFT.number = RIGHT.number AND LEFT.cut = RIGHT.cut, TRANSFORM(LEFT),LOOKUP);
-//    dep_chkSpl := DEDUP(SORT(chk_splits, node_id, number, cut, high_fork, high_branch, -cnt), node_id, number, cut, high_fork, high_branch);
-//    acc_chkSpl := TABLE(dep_chkSpl, {node_id, high_fork, depend, numDep:= COUNT(GROUP)}, node_id, high_fork, depend);
-//    chk_NoSplit:= acc_chkSpl(numdep > 1);
-//    chk_nodeSplit:= IF(p_level=maxLevel, JOIN(node_splits, chk_NoSplit, LEFT.node_id = RIGHT.node_id, TRANSFORM(LEFT), LEFT ONLY), node_splits);
-
-//    pass_thru_chk:= IF(p_level=maxLevel,PROJECT(chk_NoSplit, TRANSFORM(cNode, SELF.level:= p_level, SELF:=LEFT, SELF:=[])));
     // Start allocating new node-ids from the highest previous
-    new_nodes_low:= PROJECT(node_splits, TRANSFORM(cNode, SELF.id:= 0, SELF.value:= LEFT.cut, SELF.depend := node_base+ 2*COUNTER -1, SELF.level:= p_level, SELF.high_fork:=FALSE, SELF := LEFT));
-    new_nodes_high:= PROJECT(node_splits, TRANSFORM(cNode, SELF.id:= 0, SELF.value:= LEFT.cut, SELF.depend := node_base+ 2*COUNTER, SELF.level:= p_level, SELF.high_fork:=TRUE, SELF := LEFT));
+    new_nodes_low:= PROJECT(node_splits, TRANSFORM(cNode, SELF.id:= 0, SELF.value:= LEFT.value, SELF.depend := node_base+ 2*COUNTER -1, SELF.level:= p_level, SELF.high_fork:=FALSE, SELF := LEFT));
+    new_nodes_high:= PROJECT(node_splits, TRANSFORM(cNode, SELF.id:= 0, SELF.value:= LEFT.value, SELF.depend := node_base+ 2*COUNTER, SELF.level:= p_level, SELF.high_fork:=TRUE, SELF := LEFT));
     new_nodes:= new_nodes_low + new_nodes_high;
     // Assignig instances that didn't reach a leaf node to (new) node-ids (by joining to the sampled data)
     // leafsNodes:= pass_pure_NoSplit + pass_thru_noSplit + pass_thru_chk;
     leafsNodes:= pass_pure_NoSplit + pass_thru_noSplit;
-    noleaf:= JOIN(root_impure, leafsNodes, LEFT.node_id = RIGHT.node_id, LEFT ONLY, LOOKUP);
+    noleaf:= JOIN(root_impure_all, leafsNodes, LEFT.node_id = RIGHT.node_id, LEFT ONLY, LOOKUP);
     r1 := RECORD
       ML.Types.t_Recordid id;
       t_node nodeid;
@@ -976,7 +1020,7 @@ EXPORT Trees := MODULE
       SELF.depend := ri.value;	// Actually copies the dependant value to EVERY node - paying memory to avoid downstream cycles
       SELF := le;
     END;
-		ind1 := JOIN(ind0, dep, LEFT.id = RIGHT.id, init(LEFT,RIGHT)); // If we were prepared to force DEP into memory then ,LOOKUP would go quicker
+    ind1 :=JOIN(ind0, Dep, LEFT.id = RIGHT.id, init(LEFT,RIGHT)); // If we were prepared to force DEP into memory then ,LOOKUP would go quicker
     res := LOOP(ind1, depth, BinaryPartitionC(ROWS(LEFT), COUNTER, minNumObj));
 		splits := PROJECT(res(id=0, number>0),TRANSFORM(SplitC, SELF.new_node_id := LEFT.depend, SELF.value := LEFT.value, SELF.high_fork:=(INTEGER1)LEFT.high_fork, SELF := LEFT));    // node splits
 		leafs1 := PROJECT(res(id=0, number=0),TRANSFORM(SplitC, SELF.number:=0, SELF.value:= LEFT.depend, SELF.new_node_id:=0, SELF.high_fork:=(INTEGER1)LEFT.high_fork, SELF:= LEFT)); // leafs nodes
