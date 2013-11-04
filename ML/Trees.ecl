@@ -527,13 +527,13 @@ EXPORT Trees := MODULE
 	END;
 
 	EXPORT SplitBinInstances(DATASET(SplitC) mod, DATASET(ML.Types.NumericField) Indep) := FUNCTION
-			splits:= mod(new_node_id <> 0);	// separate split or branches
-			leafs := mod(new_node_id = 0);	// from final nodes
-			join0 := JOIN(Indep, splits, LEFT.number = RIGHT.number AND RIGHT.high_fork = IF(LEFT.value > RIGHT.value, 1, 0), LOOKUP, MANY);
-			sort0 := SORT(join0, id, level, number, node_id, new_node_id);
-			dedup0:= DEDUP(sort0, LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT);
-			dedup1:= DEDUP(dedup0, LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT);
-			RETURN dedup1;
+    splits:= mod(new_node_id <> 0);	// separate split or branches
+    ind   := DISTRIBUTE(Indep, HASH(id));
+    join0 := JOIN(ind, splits, LEFT.number = RIGHT.number AND RIGHT.high_fork = IF(LEFT.value > RIGHT.value, 1, 0), LOOKUP, MANY);
+    sort0 := SORT(join0, id, level, number, node_id, new_node_id, LOCAL);
+    dedup0:= DEDUP(sort0, LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT, LOCAL);
+    dedup1:= DEDUP(dedup0, LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT, LOCAL);
+    RETURN dedup1;
 	END;
 	
 	EXPORT gSplitInstances(DATASET(gSplitf) mod, DATASET(ML.Types.DiscreteField) Indep) := FUNCTION
