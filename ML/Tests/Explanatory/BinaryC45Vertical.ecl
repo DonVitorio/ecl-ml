@@ -109,7 +109,7 @@ wc_DS1:= DS1_Id;
 ML.ToField(wc_DS1, full_ds);
 indepData:= full_ds(number<101);
 depData:= ML.Discretize.ByRounding(full_ds(number=101));
-minNumObj:= 2;    maxLevel := 2;
+minNumObj:= 2;    maxLevel := 23;
 
 trainer1:= ML.Classify.DecisionTree.C45Binary(minNumObj, maxLevel); 
 tmod:= trainer1.LearnC(indepData, depData);
@@ -119,3 +119,7 @@ results1:= trainer1.ClassifyC(indepData, tmod);
 OUTPUT(results1, ALL, NAMED('ClassificationResults'));
 results11:= Classify.Compare(PROJECT(depData, TRANSFORM(Types.DiscreteField,SELF.number:=1, SELF:=LEFT)), results1);
 OUTPUT(results11.CrossAssignments, NAMED('CrossAssig1'));
+OUTPUT(results11.RecallByClass, NAMED('RecallByClass1'));
+OUTPUT(results11.PrecisionByClass, NAMED('PrecisionByClass1'));
+
+
