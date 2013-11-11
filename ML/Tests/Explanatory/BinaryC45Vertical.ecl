@@ -105,11 +105,12 @@ cTypeRecord := RECORD
 END;
 DS1:= DATASET( '~vherrara::datasets::ds1_100', cTypeRecord, CSV(HEADING(1)));
 AppendID(DS1, id, DS1_Id);
+//wc_DS1:= full_id_ds(id <= 100000);  // smaller dataset
 wc_DS1:= DS1_Id;
 ML.ToField(wc_DS1, full_ds);
 indepData:= full_ds(number<101);
 depData:= ML.Discretize.ByRounding(full_ds(number=101));
-minNumObj:= 2;    maxLevel := 23;
+minNumObj:= 2;    maxLevel := 50;
 
 trainer1:= ML.Classify.DecisionTree.C45Binary(minNumObj, maxLevel); 
 tmod:= trainer1.LearnC(indepData, depData);

@@ -162,7 +162,7 @@ EXPORT Trees := MODULE
       leftChildren:= PROJECT(nodes, TRANSFORM(node, SELF.node_id:= LEFT.node_id << 1, SELF.level := LEFT.level+1, SELF:=[]), LOCAL);
       rightChildren:=PROJECT(nodes, TRANSFORM(node, SELF.node_id:= (LEFT.node_id << 1) + 1, SELF.level := LEFT.level+1, SELF:=[]), LOCAL);
       x:=JOIN(splits, leftChildren + rightChildren, LEFT.node_id = RIGHT.node_id, TRANSFORM(RIGHT), RIGHT ONLY);
-      return nodes + x;
+      RETURN nodes + x;
     END;
     EXPORT FullTree := DISTRIBUTE(completeTree(Splits),HASH(node_id));  // All splits nodes must have 2 children (another split or leaf node)
     nodeBoundaries(DATASET(Node) nodes):= FUNCTION
@@ -170,13 +170,13 @@ EXPORT Trees := MODULE
         itself:= PROJECT(nodes, TRANSFORM(sNode, SELF.Id:= LEFT.node_id *2 + IF(LEFT.HighBranch, 1, 0), SELF:=LEFT), LOCAL);
         parentNodeID := PROJECT(nodes, TRANSFORM(sNode, SELF.node_id:= LEFT.node_id DIV 2, SELF.HighBranch:= (LEFT.node_id % 2)=1, SELF:=LEFT), LOCAL);
         parentData := JOIN(splits, parentNodeID, LEFT.node_id=RIGHT.NODE_id, TRANSFORM(sNode, SELF.splitId:= RIGHT.splitId, SELF.HighBranch:= RIGHT.HighBranch, SELF:= LEFT));
-        return itself + parentData;
+        RETURN itself + parentData;
       END;
       loop0:= PROJECT(nodes,TRANSFORM(sNode, SELF.splitId:= LEFT.node_id, SELF:=LEFT), LOCAL);
       allBounds := LOOP(loop0, LEFT.id=0 AND LEFT.level>0,loopbody(ROWS(LEFT)));
       LowBounds := DEDUP(SORT(allBounds(node_id<>splitId, HighBranch=FALSE), splitId, number, -level),splitId, number);
       UpBounds  := DEDUP(SORT(allBounds(node_id<>splitId, HighBranch=TRUE) , splitId, number, -level),splitId, number);
-      return SORT(LowBounds + UpBounds, splitId, -level); //(node_id<>splitId)
+      RETURN SORT(LowBounds + UpBounds, splitId, -level); //(node_id<>splitId)
     END;
     EXPORT Boundaries:= nodeBoundaries(FullTree);
     EXPORT LowBounds:=  Boundaries(HighBranch=TRUE);
@@ -525,16 +525,6 @@ EXPORT Trees := MODULE
 			dedup1:= DEDUP(dedup0, LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT);
 			RETURN dedup1;
 	END;
-
-	EXPORT SplitBinInstances(DATASET(SplitC) mod, DATASET(ML.Types.NumericField) Indep) := FUNCTION
-    splits:= mod(new_node_id <> 0);	// separate split or branches
-    ind   := DISTRIBUTE(Indep, HASH(id));
-    join0 := JOIN(ind, splits, LEFT.number = RIGHT.number AND RIGHT.high_fork = IF(LEFT.value > RIGHT.value, 1, 0), LOOKUP, MANY);
-    sort0 := SORT(join0, id, level, number, node_id, new_node_id, LOCAL);
-    dedup0:= DEDUP(sort0, LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT, LOCAL);
-    dedup1:= DEDUP(dedup0, LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT, LOCAL);
-    RETURN dedup1;
-	END;
 	
 	EXPORT gSplitInstances(DATASET(gSplitf) mod, DATASET(ML.Types.DiscreteField) Indep) := FUNCTION
 		splits:= mod(new_node_id <> 0);	// separate split or branches
@@ -850,8 +840,9 @@ EXPORT Trees := MODULE
 			RETURN splits + leafs1+ leafs2;
 	END;
 	
-//Methods to handle Continuous Data with Decision Trees
-//  EXPORT BinaryPartitionC	(DATASET(cNode) nodes, t_level p_level, t_level maxLevel, t_Count minNumObj=2) := FUNCTION
+//  Methods to handle Continuous Data with Decision Trees
+
+  // Function that splits the tree (continuos independent values) based on Info Gain Ratio crtiteria
   EXPORT BinaryPartitionC	(DATASET(cNode) nodes, t_level p_level, t_Count minNumObj=2) := FUNCTION
     node_base:= MAX(nodes, node_id);
     nodes_level:= nodes(level = p_level);
@@ -894,7 +885,6 @@ EXPORT Trees := MODULE
        REAL minSplit;       // minimum number of occurrences needed to perform a Split
        REAL split_Info:=0;  // Intrinsic Information Entropy of splits
 		END;
-
     cuts:= JOIN(root_acc, node_dep_tot, LEFT.node_id = RIGHT.node_id, 
         TRANSFORM(rec_cut, SELF.tot:= RIGHT.tot, SELF.minSplit:= RIGHT.minSplit, SELF:=LEFT), LOOKUP);  
     sort_cuts:= SORT(cuts, node_id, number, value, LOCAL);
@@ -923,6 +913,9 @@ EXPORT Trees := MODULE
     bag_count := TABLE(cuts_ok, {node_id, number, bagCnt:= COUNT(GROUP)}, node_id, number, LOCAL);
     MDLcorrection:= JOIN(bag_count, node_dep_tot, LEFT.node_id=RIGHT.node_id, 
         TRANSFORM({bag_Count, REAL IGpenalty}, SELF.IGpenalty:= (LOG(LEFT.bagCnt)/LOG(2))/RIGHT.tot, SELF:=LEFT), LOOKUP);
+
+    // Set of all possible bags (based on cuts tresholds and dependent counts, total counts initialized with 0)
+    // The bags are used to calculate Information Entropy of all possible splits per node
     rec_dep:= RECORD
        root_acc_dep;
        INTEGER tot_Low:=0;    // total number of ocurrences of Dependent with attrib-value <= treshold the Bag
@@ -939,7 +932,6 @@ EXPORT Trees := MODULE
       SELF:=          le;
       SELF:=          ri;
     END;
-    // Set of all possible bags (based on cuts tresholds and dependent cuts, total counts initialized with 0)  
     deps:= JOIN(root_acc_dep, node_dep_all, LEFT.node_id = RIGHT.node_id, pop_dep(LEFT, RIGHT), MANY LOOKUP);
     sort_deps:= SORT(deps, node_id, number, depend, value, LOCAL);
     rec_dep rold(sort_deps le, sort_deps ri) := TRANSFORM
@@ -1011,6 +1003,9 @@ EXPORT Trees := MODULE
     RETURN nodes(level < p_level) + leafsNodes + new_nodes + J + pass_thru_noMDL; 
   END;
   
+  // Function that learn from Numeric data and builds a Binary Decision Tree based on Info Gain Ratio
+  //    minNumObj   minimum number of instances in a leaf node, used in splitting process
+  //    maxLevel    stop learning criteria, either tree's level reachs maxLevel depth or no more split can be done.
 	EXPORT SplitBinaryCBased(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep, t_Count minNumObj=2, t_level maxLevel=32) := FUNCTION
 		depth   := MIN(1023, maxLevel); // Max number of iterations when building trees (max 1023 levels)
 		ind0 := ML.Utils.Fat(Indep);    // Ensure no sparsity in independents
@@ -1040,5 +1035,14 @@ EXPORT Trees := MODULE
 		leafs2:= PROJECT(depCntDedup, TRANSFORM(SplitC, SELF.number:=0, SELF.value:= LEFT.depend, SELF.new_node_id:=0, SELF:= LEFT));
 		RETURN splits + leafs1+ leafs2;
 	END;   
-    
+  // Function that locates instances into the deepest branch node (split) based on their attribute values
+  EXPORT SplitBinInstances(DATASET(SplitC) mod, DATASET(ML.Types.NumericField) Indep) := FUNCTION
+    splits:= mod(new_node_id <> 0);	// Get split nodes (branches)
+    ind   := DISTRIBUTE(Indep, HASH(id));
+    join0 := JOIN(ind, splits, LEFT.number = RIGHT.number AND RIGHT.high_fork = IF(LEFT.value > RIGHT.value, 1, 0), LOOKUP, MANY);
+    sort0 := SORT(join0, id, level, number, node_id, new_node_id, LOCAL);
+    dedup0:= DEDUP(sort0, LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT, LOCAL);
+    dedup1:= DEDUP(dedup0, LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT, LOCAL);
+    RETURN dedup1;
+  END;
 END;

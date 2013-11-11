@@ -13,7 +13,7 @@ tmodel:= trainer1.Model(tmod);
 OUTPUT(SORT(tmodel, node_id, new_node_id), ALL, NAMED('TreeModel'));
 results1:= trainer1.ClassifyC(indepData, tmod);
 OUTPUT(results1, ALL, NAMED('ClassificationResults'));
-OUTPUT(TABLE(results1, {closest_conf, cnt:= COUNT(GROUP)}, closest_conf));
+OUTPUT(TABLE(results1, {closest_conf, cnt:= COUNT(GROUP)}, closest_conf), NAMED('FinalNodeAssig1'));
 results11:= Classify.Compare(PROJECT(depData, TRANSFORM(Types.DiscreteField,SELF.number:=1, SELF:=LEFT)), results1);
 OUTPUT(results11.CrossAssignments, NAMED('CrossAssig1'));
 OUTPUT(results11.RecallByClass, NAMED('RecallByClass1'));

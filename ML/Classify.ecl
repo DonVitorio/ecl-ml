@@ -663,33 +663,43 @@ The model  is used to predict the class from new examples.
 			EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
 				RETURN GenModel(mod);
 			END;
-		END;
-	
-		EXPORT C45Binary(t_Count minNumObj=2, ML.Trees.t_level maxLevel=32) := MODULE(DEFAULT)
+    END;  // C45 DT Module
+
+/*  C45 Binary Decision Tree
+    It learns from continuous data and builds a Binary Decision Tree based on Info Gain Ratio
+    Configuration Input
+      minNumObj   minimum number of instances in a leaf node, used in splitting process
+      maxLevel    stop learning criteria, either tree's level reachs maxLevel depth or no more split can be done.
+*/
+    EXPORT C45Binary(t_Count minNumObj=2, ML.Trees.t_level maxLevel=32) := MODULE(DEFAULT)
 			EXPORT LearnC(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
 				nodes := Trees.SplitBinaryCBased(Indep, Dep, minNumObj, maxLevel);
 				AppendID(nodes, id, model);
 				ToField(model, out_model, id, modelC_fields);
 				RETURN out_model;
 			END;
-			EXPORT ClassifyC(DATASET(Types.NumericField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
-        ML.FromField(mod, Trees.SplitC, nodes, modelC_Map);	// need to use model_Map previously build when Learning (ToField)
-        leafs := nodes(new_node_id = 0);	// from final nodes
+      EXPORT ClassifyC(DATASET(Types.NumericField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
+        // Transform NumericFiled "mod" to Trees.SplitC "nodes" model format using field map modelC_Map
+        ML.FromField(mod, Trees.SplitC, nodes, modelC_Map);
+        leafs := nodes(new_node_id = 0);                    // Get leaf nodes from model
+        // Locate instances into deepest split node based upon independent values
         splitData:= Trees.SplitBinInstances(nodes, Indep);
+        // Locate instances into final leaf node and get Dependent value
         l_result final_class(RECORDOF(splitData) l, RECORDOF(leafs) r ):= TRANSFORM
           SELF.id 		:= l.id;
           SELF.number	:= 1;
           SELF.value	:= r.value;
-          SELF.conf				:= 0;		// added to fit in l_result, not used so far
-          SELF.closest_conf:= l.new_node_id;	// added to fit in l_result, not used so far
+          SELF.conf		:= 0;		// added to fit in l_result, not used so far
+          SELF.closest_conf:= l.new_node_id;	// store final leaf node id, will use it in class distribution
         END;
         RETURN JOIN(splitData, leafs, LEFT.new_node_id = RIGHT.node_id, final_class(LEFT, RIGHT), LOOKUP);
       END;
-			EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
-				ML.FromField(mod, Trees.SplitC, o, modelC_Map);
-        RETURN o;
+      EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
+        ML.FromField(mod, Trees.SplitC, outModel, modelC_Map);
+        RETURN outModel;
 			END;
-		END;
+    END; // C45Binary DT Module
+
 	END; // DecisionTree Module
 	
 /* From http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#overview
@@ -725,22 +735,23 @@ Configuration Input
 			RETURN o;
 		END;
 		EXPORT ClassifyD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
-			ML.FromField(mod, Trees.gSplitF, nodes, model_Map);	// need to use model_Map previously build when Learning (ToField)
-			leafs := nodes(new_node_id = 0);	// from final nodes
-			splitData_raw:= Trees.gSplitInstances(nodes, Indep);
-			splitData:= DISTRIBUTE(splitData_raw, id);
-			l_result final_class(RECORDOF(splitData) l, RECORDOF(leafs) r ):= TRANSFORM
-				SELF.id     := l.id;
-				SELF.number := 1;
-				SELF.value  := r.value;
-				SELF.conf   := 0;		// store percentaje of voting over total number of trees
-				SELF.closest_conf:= 0;	// added to fit in l_result, not used so far
-			END;
-			gClass:= JOIN(splitData, leafs, LEFT.new_node_id = RIGHT.node_id AND LEFT.group_id = RIGHT.group_id, final_class(LEFT, RIGHT), LOOKUP);
-			accClass:= TABLE(gClass, {id, number, value, cnt:= COUNT(GROUP)}, id, number, value, LOCAL);
-			sClass := SORT(accClass, id, -cnt, LOCAL);
-			finalClass:=DEDUP(sClass, id, LOCAL);
-			RETURN PROJECT(finalClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/treeNum, SELF:= LEFT, SELF:=[]), LOCAL);
-		END;
-	END; // RandomTree module
+      ML.FromField(mod, Trees.gSplitF, nodes, model_Map);	// need to use model_Map previously build when Learning (ToField)
+      leafs := nodes(new_node_id = 0);	// from final nodes
+      splitData_raw:= Trees.gSplitInstances(nodes, Indep);
+      splitData:= DISTRIBUTE(splitData_raw, id);
+      l_result final_class(RECORDOF(splitData) l, RECORDOF(leafs) r ):= TRANSFORM
+        SELF.id     := l.id;
+        SELF.number := 1;
+        SELF.value  := r.value;
+        SELF.conf   := 0;		// store percentaje of voting over total number of trees
+        SELF.closest_conf:= 0;	// added to fit in l_result, not used so far
+      END;
+      gClass:= JOIN(splitData, leafs, LEFT.new_node_id = RIGHT.node_id AND LEFT.group_id = RIGHT.group_id, final_class(LEFT, RIGHT), LOOKUP);
+      accClass:= TABLE(gClass, {id, number, value, cnt:= COUNT(GROUP)}, id, number, value, LOCAL);
+      sClass := SORT(accClass, id, -cnt, LOCAL);
+      finalClass:=DEDUP(sClass, id, LOCAL);
+      RETURN PROJECT(finalClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/treeNum, SELF:= LEFT, SELF:=[]), LOCAL);
+    END;
+  END;
+  // RandomTree module
 END;
