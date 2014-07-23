@@ -175,7 +175,7 @@ model:= learner.modelC(result);  // transforming model to a easier way to read i
 OUTPUT(SORT(model, group_id, node_id),NAMED('modelC_ouput'), ALL); // group_id represent number of tree
 
 //Class distribution for each Instance
-ClassDist:= learner.ClassProbabilityDistributionC(IndepData, result);
+ClassDist:= learner.ClassProbDistribC(IndepData, result);
 OUTPUT(ClassDist, NAMED('ClassDist'), ALL);
 class:= learner.classifyC(IndepData, result); // classifying
 OUTPUT(class, NAMED('class_result'), ALL); // conf show voting percentage
@@ -186,9 +186,9 @@ OUTPUT(performance.RecallByClass, NAMED('RecallByClass'));
 OUTPUT(performance.PrecisionByClass, NAMED('PrecisionByClass'));
 OUTPUT(performance.FP_Rate_ByClass, NAMED('FP_Rate_ByClass'));
 //Calculating Area Under the Curve for each Class
-AUC1:= learner.AUC_ROC(ClassDist, 1, depData); //Area under ROC Curve for class "1"
+AUC1:= Classify.AUC_ROC(ClassDist, 1, depData); //Area under ROC Curve for class "1"
 OUTPUT(AUC1, ALL, NAMED('AUC_1'));
-AUC2:= learner.AUC_ROC(ClassDist, 2, depData); //Area under ROC Curve for class "2"
+AUC2:= Classify.AUC_ROC(ClassDist, 2, depData); //Area under ROC Curve for class "2"
 OUTPUT(AUC2, ALL, NAMED('AUC_2'));
-AUC3:= learner.AUC_ROC(ClassDist, 3, depData); //Area under ROC Curve for class "3"
+AUC3:= Classify.AUC_ROC(ClassDist, 3, depData); //Area under ROC Curve for class "3"
 OUTPUT(AUC3, ALL, NAMED('AUC_3'));

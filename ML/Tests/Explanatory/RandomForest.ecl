@@ -49,7 +49,7 @@ model:= learner.model(result);  // transforming model to a easier way to read it
 OUTPUT(SORT(model, group_id, node_id),NAMED('model_ouput'), ALL); // group_id represent number of tree
 
 //Class distribution for each Instance
-ClassDist:= learner.ClassProbabilityDistributionD(IndepData, result);
+ClassDist:= learner.ClassProbDistribD(IndepData, result);
 OUTPUT(ClassDist, NAMED('ClassDist'), ALL);
 class:= learner.classifyD(IndepData, result); // classifying
 OUTPUT(class, NAMED('class_result'), ALL); // conf show voting percentage
@@ -58,7 +58,7 @@ OUTPUT(class, NAMED('class_result'), ALL); // conf show voting percentage
 performance:= Classify.Compare(depData, class);
 OUTPUT(performance.CrossAssignments, NAMED('CrossAssig'));
 //AUC_ROC returns all the ROC points and the value of the Area under the curve in the LAST_RECORD(AUC FIELD)
-AUC0:= learner.AUC_ROC(ClassDist, 0, depData); //Area under ROC Curve for class "0"
+AUC0:= Classify.AUC_ROC(ClassDist, 0, depData); //Area under ROC Curve for class "0"
 OUTPUT(AUC0, ALL, NAMED('AUC_0'));
-AUC1:= learner.AUC_ROC(ClassDist, 1, depData); //Area under ROC Curve for class "1"
+AUC1:= Classify.AUC_ROC(ClassDist, 1, depData); //Area under ROC Curve for class "1"
 OUTPUT(AUC1, ALL, NAMED('AUC_1'));

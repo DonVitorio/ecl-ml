@@ -7,6 +7,11 @@ EXPORT Ensemble := MODULE
   SHARED t_level := UNSIGNED2;
   SHARED t_Count:= Types.t_Count;
   SHARED t_Index:= INTEGER4;
+  SHARED l_result:= Types.l_result;
+  EXPORT modelD_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'new_node_id','5'},{'group_id',6}], {STRING orig_name; STRING assigned_name;});
+  EXPORT STRING modelD_fields := 'node_id,level,number,value,new_node_id,group_id';	// need to use field map to call FromField later
+  EXPORT modelC_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'high_fork','5'},{'new_node_id','6'},{'group_id',7}], {STRING orig_name; STRING assigned_name;});
+  EXPORT STRING modelC_fields := 'node_id,level,number,value,high_fork,new_node_id,group_id';	// need to use field map to call FromField later
   EXPORT NodeID := RECORD
     t_node node_id;
     t_level level;
@@ -74,17 +79,7 @@ EXPORT Ensemble := MODULE
     RETURN TABLE(raw_set, {gNum, number});
   END;
 
-  EXPORT gSplitInstD(DATASET(gSplitf) mod, DATASET(Types.DiscreteField) Indep) := FUNCTION
-    splits:= mod(new_node_id <> 0);	// separate split or branches
-    leafs := mod(new_node_id = 0);	// from final nodes
-    join0 := JOIN(Indep, splits, LEFT.number = RIGHT.number AND LEFT.value = RIGHT.value, LOOKUP, MANY);
-    sort0 := SORT(join0, group_id, id, level, number, node_id, new_node_id);
-    group0:= GROUP(sort0, group_id, id);
-    dedup0:= DEDUP(group0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT);
-    dedup1:= DEDUP(dedup0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT);
-    RETURN dedup1;
-  END;
-
+/* Discrete implementation*/
 // Function to split a set of nodes based on Feature Selection and Gini Impurity,
 // the nodes received were generated sampling with replacement nTrees times.
 // Note: it selects kFeatSel out of mTotFeats features for each sample, features must start at 1 and cannot exist a gap in the numeration.
@@ -176,18 +171,49 @@ EXPORT Ensemble := MODULE
                                           SELF.new_node_id:=0, SELF:= LEFT));
     RETURN new_nodes + maxlevel_leafs;
   END;
+  EXPORT FromDiscreteForest(DATASET(Types.NumericField) mod) := FUNCTION
+    ML.FromField(mod, gSplitF,o, modelD_Map);
+    RETURN o;
+  END;
+  EXPORT ToDiscreteForest(DATASET(gSplitF) nodes) := FUNCTION
+    AppendID(nodes, id, model);
+    ToField(model, out_model, id, modelD_fields);
+    RETURN out_model;
+  END;
+  // Function that locates instances into the deepest branch nodes (split) based on their attribute values
+  EXPORT gSplitInstD(DATASET(gSplitf) mod, DATASET(Types.DiscreteField) Indep) := FUNCTION
+    splits := mod(new_node_id <> 0);	// separate split or branches
+    leafs  := mod(new_node_id = 0);	// from final nodes
+    join0  := JOIN(Indep, splits, LEFT.number = RIGHT.number AND LEFT.value = RIGHT.value, LOOKUP, MANY);
+    sort0  := SORT(join0, group_id, id, level, number, node_id, new_node_id);
+    group0 := GROUP(sort0, group_id, id);
+    dedup0 := DEDUP(group0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT);
+    RETURN DEDUP(dedup0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT);
+  END;
+  // Probability function for discrete independent values and model
+  EXPORT ClassProbDistribForestD(DATASET(Types.DiscreteField) Indep, DATASET(Types.NumericField) mod) := FUNCTION
+    nodes := FromDiscreteForest(mod);
+    leafs := nodes(new_node_id = 0);	// from final nodes
+    splitData_raw:= gSplitInstD(nodes, Indep);
+    splitData:= DISTRIBUTE(splitData_raw, id);
+    gClass:= JOIN(splitData, leafs, LEFT.new_node_id = RIGHT.node_id AND LEFT.group_id = RIGHT.group_id,
+              TRANSFORM(Types.DiscreteField, SELF.id:= LEFT.id, SELF.number := 1, SELF.value:= RIGHT.value), LOOKUP);
+    accClass:= TABLE(gClass, {id, number, value, cnt:= COUNT(GROUP)}, id, number, value, LOCAL);
+    tClass := TABLE(accClass, {id, number, tot:= SUM(GROUP, cnt)}, id, number, LOCAL);
+    sClass:= JOIN(accClass, tClass, LEFT.number=RIGHT.number AND LEFT.id=RIGHT.id, LOCAL);
+    RETURN PROJECT(sClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/LEFT.tot, SELF:= LEFT, SELF:=[]), LOCAL);
+  END;
+  // Classification function for discrete independent values and model
+  EXPORT ClassifyDForest(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
+    // get class probabilities for each instance
+    dClass:= ClassProbDistribForestD(Indep, mod);
+    // select the class with greatest probability for each instance
+    sClass := SORT(dClass, id, -conf, LOCAL);
+    finalClass:=DEDUP(sClass, id, LOCAL);
+    RETURN PROJECT(finalClass, TRANSFORM(l_result, SELF:= LEFT, SELF:=[]), LOCAL);
+  END;
 
 /* Continuos implementation*/
-  EXPORT gSplitInstC(DATASET(gSplitC) mod, DATASET(Types.NumericField) Indep) := FUNCTION
-    splits:= mod(new_node_id <> 0);	// separate split or branches
-    leafs := mod(new_node_id = 0);	// from final nodes
-    Ind   := DISTRIBUTE(Indep, HASH(id));
-    join0 := JOIN(Ind, splits, LEFT.number = RIGHT.number AND RIGHT.high_fork = IF(LEFT.value > RIGHT.value, 1, 0), LOOKUP, MANY);
-    sort0 := SORT(join0, group_id, id, level, node_id, LOCAL);
-    dedup0:= DEDUP(sort0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT, LOCAL);
-    dedup1:= DEDUP(dedup0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT, LOCAL);
-    RETURN dedup1;
-  END;
 // Function to binary-split a set of nodes based on Feature Selection and Gini Impurity,
 // the nodes received were generated sampling with replacement nTrees times.
 // Note: it selects kFeatSel out of mTotFeats features for each sample, features must start at 1 and cannot exist a gap in the numeration.  
@@ -341,5 +367,46 @@ EXPORT Ensemble := MODULE
     depCntDedup := DEDUP(depCntSort, group_id, node_id);     // the class value with more counts is selected
     maxlevel_leafs:= PROJECT(depCntDedup, TRANSFORM(gSplitC, SELF.number:=0, SELF.value:= LEFT.depend, SELF.new_node_id:=0, SELF:= LEFT));
     RETURN new_nodes + maxlevel_leafs;
+  END;
+  EXPORT ToContinuosForest(DATASET(gSplitC) nodes) := FUNCTION
+    AppendID(nodes, id, model);
+    ToField(model, out_model, id, modelC_fields);
+    RETURN out_model;
+  END;
+  EXPORT FromContinuosForest(DATASET(Types.NumericField) mod) := FUNCTION
+    ML.FromField(mod, gSplitC,o, modelC_Map);
+    RETURN o;
+  END;
+  // Function that locates instances into the deepest branch nodes (split) based on their attribute values
+  EXPORT gSplitInstC(DATASET(gSplitC) mod, DATASET(Types.NumericField) Indep) := FUNCTION
+    splits:= mod(new_node_id <> 0);	// separate split or branches
+    leafs := mod(new_node_id = 0);	// from final nodes
+    Ind   := DISTRIBUTE(Indep, HASH(id));
+    join0 := JOIN(Ind, splits, LEFT.number = RIGHT.number AND RIGHT.high_fork = IF(LEFT.value > RIGHT.value, 1, 0), LOOKUP, MANY);
+    sort0 := SORT(join0, group_id, id, level, node_id, LOCAL);
+    dedup0:= DEDUP(sort0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT, LOCAL);
+    RETURN DEDUP(dedup0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT, LOCAL);
+  END;
+  // Probability function for continuous independent values and model
+  EXPORT ClassProbDistribForestC(DATASET(Types.NumericField) Indep, DATASET(Types.NumericField) mod) := FUNCTION
+    nodes := FromContinuosForest(mod);
+    leafs := nodes(new_node_id = 0);	// from final nodes
+    splitData_raw:= gSplitInstC(nodes, Indep);
+    splitData:= DISTRIBUTE(splitData_raw, id);
+    gClass:= JOIN(splitData, leafs, LEFT.new_node_id = RIGHT.node_id AND LEFT.group_id = RIGHT.group_id,
+              TRANSFORM(Types.DiscreteField, SELF.id:= LEFT.id, SELF.number := 1, SELF.value:= RIGHT.value), LOOKUP);
+    accClass:= TABLE(gClass, {id, number, value, cnt:= COUNT(GROUP)}, id, number, value, LOCAL);
+    tClass := TABLE(accClass, {id, number, tot:= SUM(GROUP, cnt)}, id, number, LOCAL);
+    sClass:= JOIN(accClass, tClass, LEFT.number=RIGHT.number AND LEFT.id=RIGHT.id, LOCAL);
+    RETURN PROJECT(sClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/LEFT.tot, SELF:= LEFT, SELF:=[]), LOCAL);
+  END;
+  // Classification function for continuous independent values and model
+  EXPORT ClassifyCForest(DATASET(Types.NumericField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
+    // get class probabilities for each instance
+    dClass:= ClassProbDistribForestC(Indep, mod);
+    // select the class with greatest probability for each instance
+    sClass := SORT(dClass, id, -conf, LOCAL);
+    finalClass:=DEDUP(sClass, id, LOCAL);
+    RETURN PROJECT(finalClass, TRANSFORM(l_result, SELF:= LEFT, SELF:=[]), LOCAL);
   END;
 END;
