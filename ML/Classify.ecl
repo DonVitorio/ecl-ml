@@ -31,20 +31,14 @@ EXPORT Compare(DATASET(Types.DiscreteField) Dep,DATASET(l_result) Computed) := M
 		Types.t_Discrete  c_actual;      // The value of c provided
 		Types.t_Discrete  c_modeled;		 // The value produced by the classifier
 		Types.t_FieldReal score;         // Score allocated by classifier
-		Types.t_FieldReal score_delta;   // Difference to next best
-		BOOLEAN           sole_result;   // Did the classifier only have one option
 	END;
 	DiffRec  notediff(Computed le,Dep ri) := TRANSFORM
 	  SELF.c_actual := ri.value;
 		SELF.c_modeled := le.value;
 		SELF.score := le.conf;
-		SELF.score_delta := IF ( le.closest_conf>0, le.closest_conf-le.conf,0 );
-		SELF.sole_result := le.closest_conf=0;
 		SELF.classifier := ri.number;
 	END;
 	SHARED J := JOIN(Computed,Dep,LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number,notediff(LEFT,RIGHT));
-	// Shows which classes were modeled as which classes
-	EXPORT Raw := TABLE(J,{classifier,c_actual,c_modeled,score,score_delta,sole_result,Cnt := COUNT(GROUP)},classifier,c_actual,c_modeled,score,score_delta,sole_result,MERGE);
 	// Building the Confusion Matrix
 	SHARED ConfMatrix_Rec := RECORD
 		Types.t_FieldNumber classifier;	// The classifier in question (value of 'number' on outcome data)
@@ -317,22 +311,17 @@ END;
 				SELF := le;
 			END;
 			CNoted := JOIN(MissingNoted,mo(number=0),LEFT.c=RIGHT.c,NoteC(LEFT,RIGHT),LOOKUP);
-			S := DEDUP(SORT(CNoted,Id,class_number,P,c,LOCAL),Id,class_number,LOCAL,KEEP(2));
-
-			l_result tr(S le) := TRANSFORM
-			  SELF.value := le.c; // Store the value of the classifier
-				SELF.number := le.class_number; 
-				SELF.Conf := le.p;
-				SELF.closest_conf := 0;
-				SELF.id := le.id;
-			END;
-			
-			ST := PROJECT(S,tr(LEFT));
-			l_result rem(ST le, ST ri) := TRANSFORM
-				SELF.closest_conf := ri.conf;
-				SELF := le;
-			END;
-			Ro := ROLLUP(ST,LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number,rem(LEFT,RIGHT),LOCAL);
+      l_result toProb(CNoted le) := TRANSFORM
+        SELF.value := le.c; // Store the value of the classifier
+        SELF.number := le.class_number; 
+        SELF.conf := POWER(2.0, -le.p);
+        SELF.id := le.id;
+      END;
+      CProb := PROJECT(CNoted,toProb(LEFT), LOCAL);
+      gInst := TABLE(CProb,{number, id, tot:=SUM(GROUP,conf)}, number, id, LOCAL);
+      clDist:= JOIN(CProb,gInst,LEFT.number=RIGHT.number AND LEFT.id=RIGHT.id, TRANSFORM(Types.l_result, SELF.conf:=LEFT.conf/RIGHT.tot, SELF:=LEFT), LOCAL);
+      sCD   := SORT(clDist, id, -conf, LOCAL);
+      Ro:= DEDUP(sCD, LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number, LOCAL);
 			RETURN Ro;
 		END;
     /*From Wikipedia    
@@ -425,7 +414,7 @@ END;
       // Posterior probability = prior x likehood_product / evidence
       // We use only the numerator of that fraction, because the denominator is effectively constant.
       // See: http://en.wikipedia.org/wiki/Naive_Bayes_classifier#Probabilistic_model
-      AllPosterior:= JOIN(LikehoodProduct, LogPC, LEFT.class_number = RIGHT.class_number AND LEFT.c = RIGHT.c, TRANSFORM(l_result, SELF.conf:= LEFT.prod + RIGHT.mu, SELF.number:=LEFT.class_number, SELF.value:= RIGHT.c, SELF.closest_conf:= 0, SELF:=LEFT), LOOKUP);
+      AllPosterior:= JOIN(LikehoodProduct, LogPC, LEFT.class_number = RIGHT.class_number AND LEFT.c = RIGHT.c, TRANSFORM(l_result, SELF.conf:= LEFT.prod + RIGHT.mu, SELF.number:=LEFT.class_number, SELF.value:= RIGHT.c, SELF:=LEFT), LOOKUP);
       sortPost:= SORT(AllPosterior, id, number, conf, LOCAL);
       // The class with greatest posterior probability is selected (smallest prod cause we are using LogScale values)
       RETURN DEDUP(sortPost, LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number);
@@ -566,7 +555,6 @@ END;
 			Ind := DISTRIBUTE(Indep,HASH(id));
 			l_result note(Ind le,mo ri) := TRANSFORM
 			  SELF.conf := le.value*ri.w;
-				SELF.closest_conf := 0;
 				SELF.number := ri.class_number;
 				SELF.value := 0;
 				SELF.id := le.id;
@@ -681,7 +669,6 @@ EXPORT Logistic_sparse(REAL8 Ridge=0.00001, REAL8 Epsilon=0.000000001, UNSIGNED2
 		  SELF.id := le.x;
 			SELF.number := le.y;
 			SELF.conf := ABS(le.value-0.5);
-			SELF.closest_conf := 0;
 		END;
 		RETURN PROJECT(sigmoid,tr(LEFT));
 	END;
@@ -1015,9 +1002,8 @@ EXPORT Logistic_sparse(REAL8 Ridge=0.00001, REAL8 Epsilon=0.000000001, UNSIGNED2
         l_result tr(sigmoid le) := TRANSFORM
           SELF.value := IF ( le.value > 0.5,1,0);
           SELF.id := le.x;
-            SELF.number := le.y;
-            SELF.conf := ABS(le.value-0.5);
-            SELF.closest_conf := 0;
+          SELF.number := le.y;
+          SELF.conf := ABS(le.value-0.5);
         END;
         
         RETURN PROJECT(sigmoid,tr(LEFT));

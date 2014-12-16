@@ -29,7 +29,6 @@ Model4 := LogisticModule.LearnCS(flds0(Number<=2),flds(Number=4));
 Model4;
 
 TestModule := LogisticModule.TestD(flds(Number<=2),flds(Number>=3));
-TestModule.Raw;
 TestModule.CrossAssignments;
 TestModule.PrecisionByClass;
 TestModule.Headline;

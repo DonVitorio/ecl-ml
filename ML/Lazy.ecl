@@ -1,4 +1,4 @@
-IMPORT ML;
+﻿IMPORT ML;
 IMPORT * FROM $;
 /*
 Instance-based learning
@@ -8,10 +8,7 @@ instead of performing explicit generalization, compare new problem instances wit
 which have been stored in memory. Instance-based learning is a kind of lazy learning.
 */
 EXPORT Lazy:= MODULE
-  SHARED l_result := RECORD(Types.DiscreteField)
-    REAL8 conf;  // Confidence - high is good
-    REAL8 closest_conf:=0;
-  END;
+  SHARED l_result := Types.l_result;
   // General KNN Classifier
   EXPORT KNN(CONST Types.t_count NN_count=5) := MODULE,VIRTUAL
     EXPORT MajorityVote(DATASET(NearestNeighborsSearch.NN) NNeighbors ,DATASET(Types.DiscreteField) depData):= FUNCTION

@@ -1,4 +1,4 @@
-//BWR_testOfRegessionOLS_LUBothDenseAndSpase.ecl
+﻿//BWR_testOfRegessionOLS_LUBothDenseAndSpase.ecl
 IMPORT ML;
 value_ecod := RECORD
 unsigned id;

@@ -917,8 +917,7 @@ EXPORT Trees := MODULE
       SELF.id 		:= l.id;
       SELF.number	:= 1;
       SELF.value	:= r.value;
-      SELF.conf		:= 0;		// added to fit in l_result, not used so far
-      SELF.closest_conf:= l.new_node_id;	// store final leaf node id, will use it in class distribution
+      SELF.conf		:= l.new_node_id;;		// store final leaf node id, will use it in class distribution
     END;
     RETURN JOIN(splitData, leafs, LEFT.new_node_id = RIGHT.node_id, final_class(LEFT, RIGHT), LOOKUP);
   END;
