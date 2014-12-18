@@ -1,4 +1,4 @@
-IMPORT * FROM ML;
+﻿IMPORT * FROM ML;
 IMPORT ML.Tests.Explanatory as TE;
 
 Depth:= 10;
@@ -22,15 +22,14 @@ depTest := ML.Discretize.ByRounding(pr_depT);
 iknn:= Lazy.KNN_KDTree(5);
 
 TestModule:=  iknn.TestC(IndepTest, depTest);
-TestModule.Raw;
 TestModule.CrossAssignments;
 TestModule.PrecisionByClass;
-TestModule.Headline;
+TestModule.Accuracy;
 
 computed:=  iknn.ClassifyC(IndepData, depData, IndepTest);
 Comparison:=  ML.Classify.Compare(depTest, computed);
 computed;
-Comparison.Raw;
+
 Comparison.CrossAssignments;
 Comparison.PrecisionByClass;
-Comparison.Headline;
+Comparison.Accuracy;

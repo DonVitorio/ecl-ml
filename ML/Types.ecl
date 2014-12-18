@@ -19,26 +19,25 @@ EXPORT t_Count := t_RecordID; // Possible to count every record
 
 EXPORT NumericField := RECORD
   t_RecordID id;
-	t_FieldNumber number;
-	t_FieldReal value;
-  END;
+  t_FieldNumber number;
+  t_FieldReal value;
+END;
 
 EXPORT DiscreteField := RECORD
   t_RecordID id;
-	t_FieldNumber number;
-	t_Discrete value;
-  END;
+  t_FieldNumber number;
+  t_Discrete value;
+END;
 
 EXPORT l_result := RECORD(DiscreteField)
   REAL8 conf;  // Confidence - high is good
-  REAL8 closest_conf;
-  END;
+END;
 
 EXPORT ItemElement := RECORD
   t_Item value;
-	t_RecordId id;
-  END;
-	
+  t_RecordId id;
+END;
+
 EXPORT ToMatrix(DATASET(NumericField) d):=FUNCTION
   RETURN PROJECT(d,TRANSFORM(Mat.Types.Element,SELF.x:=(TYPEOF(Mat.Types.Element.x))LEFT.id;SELF.y:=(TYPEOF(Mat.Types.Element.y))LEFT.number;SELF.value:=(TYPEOF(Mat.Types.Element.value))LEFT.value;));
 END;

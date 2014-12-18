@@ -15,10 +15,16 @@ D_Model:= trainer.LearnD(indepDataD, depDataD);
 dmodel:= trainer.Model(D_model);
 OUTPUT(SORT(dmodel, id), ALL, NAMED('DiscModel'));
 //Classification Phase
+D_classDist:= trainer.ClassProbDistribD(indepDataD, D_Model);
 D_results:= trainer.ClassifyD(indepDataD, D_Model);
-OUTPUT(D_results, NAMED('DiscClassifResults'), ALL);
 D_compare:= Classify.Compare(depDataD, D_results);
+AUC_D0:= Classify.AUC_ROC(D_classDist, 0, depDataD); //Area under ROC Curve for class "1"
+AUC_D1:= Classify.AUC_ROC(D_classDist, 1, depDataD); //Area under ROC Curve for class "2"
+OUTPUT(D_classDist, ALL, NAMED('DisClassDist'));
+OUTPUT(D_results, NAMED('DiscClassifResults'), ALL);
 OUTPUT(SORT(D_compare.CrossAssignments, c_actual, c_modeled), NAMED('DiscCrossAssig'), ALL);
+OUTPUT(AUC_D0, ALL, NAMED('AUC_D0'));
+OUTPUT(AUC_D1, ALL, NAMED('AUC_D1'));
 
 //Lymphoma Dataset
 lymphomaData:= lymphomaDS.DS;
