@@ -96,7 +96,7 @@ EXPORT Ensemble := MODULE
   EXPORT SplitFeatureSampleGI(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep, t_Index treeNum, t_Count fsNum, REAL Purity=1.0, t_level maxLevel=32) := FUNCTION
     N       := MAX(Dep, id);       // Number of Instances
     totFeat := COUNT(Indep(id=N)); // Number of Features
-    depth   := MIN(255, maxLevel); // Max number of iterations when building trees (max 126 levels)
+    depth   := MIN(255, maxLevel); // Max number of iterations when building trees (max 256 levels)
     // sampling with replacement the original dataset to generate treeNum Datasets
     gNodeInstDisc init(Types.DiscreteField dep, Sampling.idListGroupRec depG) := TRANSFORM
       SELF.group_id := depG.gNum;
@@ -106,39 +106,30 @@ EXPORT Ensemble := MODULE
       SELF.number   := 1;
       SELF.value    := Dep.value;
       SELF.depend   := Dep.value;
-    END;    
-    grList0:= ML.Sampling.GenerateNSampleList(treeNum, N); // the number of records will be N * treeNum
-    grList := DISTRIBUTE(grList0, HASH(id));
-    depG:= JOIN(Dep, grList, LEFT.id = RIGHT.oldId, init(LEFT, RIGHT)); // if grList were not too big we should use lookup
-    all_Data := DISTRIBUTE(JOIN(Indep, grList, LEFT.id = RIGHT.oldId, GetDRecords(LEFT, RIGHT), LOOKUP, MANY), HASH(id));
+    END;
+    grList0   := ML.Sampling.GenerateNSampleList(treeNum, N); // the number of records will be N * treeNum
+    dgrLstOld := DISTRIBUTE(grList0, HASH(oldId));
+    dDep      := DISTRIBUTE(Dep, HASH(Id));
+    depG      := JOIN(dDep, dgrLstOld, LEFT.id = RIGHT.oldId, init(LEFT, RIGHT), LOCAL);
+    dIndep    := DISTRIBUTE(Indep, HASH(Id));
+    all_Data0 := JOIN(dIndep, dgrLstOld, LEFT.id = RIGHT.oldId, GetDRecords(LEFT, RIGHT), LOCAL);
+    // Calculated only once, used at each iteration inside loopbody
+    all_Data  := DISTRIBUTE(all_Data0, HASH(id));
+    dgrLstNew := DISTRIBUTE(grList0, HASH(id));
+    // loopbody function
     gNodeInstDisc RndFeatSelPartitionGIBased(DATASET(gNodeInstDisc) nodes, t_Count nTrees, t_Count kFeatSel, t_Count mTotFeats, t_Count p_level, REAL Purity=1.0):= FUNCTION
-/*    
-      // This code could generate an error if PureEnough is large, could be use for small to mediem datasets
-      Purities      := ML.Utils.Gini(nodes, node_id, depend); // Compute the purities for each node
-      PureEnough    := SET(Purities(1-Purity >= gini), node_id);
-      pass_thru     := nodes(node_id IN PureEnough);
-      nodes_toSplit := nodes(node_id NOT IN PureEnough);
-*/
-      // This code works, however for small PureEnough results the above should be more efficent
-      Purities      := ML.Utils.Gini(nodes, node_id, depend); // Compute the purities for each node
-      PureEnough    := Purities(1-Purity >= gini);            // Filtering pure nodes
+      Purities      := ML.Utils.Gini(nodes, node_id, depend);   // Compute the purities for each node
+      PureEnough    := Purities(1-Purity >= gini);              // Filtering pure nodes
       pureNodes     := JOIN(nodes, PureEnough, LEFT.node_id = RIGHT.node_id, TRANSFORM({gNodeInstDisc, BOOLEAN pure:= FALSE}, SELF.pure:=RIGHT.node_id>0, SELF:=LEFT, ), LEFT OUTER);
       pass_thru     := PROJECT(pureNodes(pure = TRUE), gNodeInstDisc, LOCAL);
       nodes_toSplit := PROJECT(pureNodes(pure = FALSE), gNodeInstDisc, LOCAL);           
-
-/*
-      // This code produce an Error:
-      // System error: 0: Error loading /var/lib/HPCCSystems/myeclccserver/libW20150805-191358.so: /var/lib/HPCCSystems/myeclccserver/libW20150805-191358.so: undefined symbol: _Z32rtlDictionaryLookupExistsSignedNjPPhjy (0, 0), 0,
-      Purities      := ML.Utils.Gini(nodes, node_id, depend); // Compute the purities for each node
-      PureEnough    := Purities(1-Purity >= gini);            // Filtering pure nodes
-      PureDCT       := DICTIONARY(PureEnough, {node_id => PureEnough});
-      pass_thru     := nodes(node_id IN PureDCT);
-      nodes_toSplit := nodes(node_id NOT IN PureDCT);
-*/
-      featSet       := NxKoutofM(nTrees, kFeatSel, mTotFeats);  // generating list of features selected for each tree, LOOKUP);
-      featSetInst   := JOIN(grList, featSet, LEFT.gNum = RIGHT.gNum, MANY LOOKUP);    // splitting the instances that did not reach a leaf node
+      // Gather only the data needed for each LOOP iteration,
+      // featSetInst preserves dgrLstNew distribution, then it can be JOINed LOCALly with all_Data (HASH(id) distribution also)
+      featSet       := NxKoutofM(nTrees, kFeatSel, mTotFeats);  // generating list of features selected for each tree
+      featSetInst   := JOIN(dgrLstNew, featSet, LEFT.gNum = RIGHT.gNum, MANY LOOKUP);
       loop_Data     := JOIN(all_Data, featSetInst, LEFT.id = RIGHT.id AND LEFT.number = RIGHT.number, TRANSFORM(LEFT), LOCAL);
-      toSplit       := JOIN(loop_Data, nodes_toSplit, LEFT.id = RIGHT.id, TRANSFORM(gNodeInstDisc, SELF.number:= LEFT.number; SELF.value:= LEFT.value; SELF:= RIGHT;));
+      // splitting the instances that did not reach a leaf node
+      toSplit       := JOIN(loop_Data, nodes_toSplit, LEFT.id = RIGHT.id, TRANSFORM(gNodeInstDisc, SELF.number:= LEFT.number; SELF.value:= LEFT.value; SELF:= RIGHT;), HASH);
       this_set      := DISTRIBUTE(toSplit, HASH(group_id, node_id));
       agg           := TABLE(this_set, {group_id, node_id, number, value, depend,Cnt := COUNT(GROUP)}, group_id, node_id, number, value, depend, LOCAL);
       aggc          := TABLE(agg, {group_id, node_id, number, value, TCnt := SUM(GROUP, Cnt)}, group_id, node_id, number, value, LOCAL);
@@ -146,19 +137,21 @@ EXPORT Ensemble := MODULE
         agg;
         REAL4 Prop; // Proportion pertaining to this dependant value
       END;
-      prop := JOIN(agg, aggc, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id
-              AND LEFT.number=RIGHT.number AND LEFT.value = RIGHT.value,
-              TRANSFORM(r, SELF.Prop := LEFT.Cnt/RIGHT.Tcnt, SELF := LEFT), HASH);
-      gini_per := TABLE(prop, {group_id, node_id, number, value, tcnt := SUM(GROUP,Cnt),val := SUM(GROUP,Prop*Prop)}, group_id, node_id, number, value, LOCAL);
-      gini     := TABLE(gini_per, {group_id, node_id, number, gini_t := SUM(GROUP,tcnt*val)/SUM(GROUP,tcnt)}, group_id, node_id, number, LOCAL);
-      splt     := DEDUP(SORT(gini, group_id, node_id, -gini_t, LOCAL), group_id, node_id, LOCAL);
-      node_cand0 := JOIN(aggc, splt, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id AND LEFT.number = RIGHT.number, TRANSFORM(LEFT), LOOKUP);
+      // Calculating Gini Impurity after every split
+      prop      := JOIN(agg, aggc, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value = RIGHT.value,
+                      TRANSFORM(r, SELF.Prop := LEFT.Cnt/RIGHT.Tcnt, SELF := LEFT), HASH);
+      gini_per  := TABLE(prop, {group_id, node_id, number, value, tcnt := SUM(GROUP,Cnt),val := SUM(GROUP,Prop*Prop)}, group_id, node_id, number, value, LOCAL);
+      gini      := TABLE(gini_per, {group_id, node_id, number, gini_t := SUM(GROUP,tcnt*val)/SUM(GROUP,tcnt)}, group_id, node_id, number, LOCAL);
+      splt      := DEDUP(SORT(gini, group_id, node_id, -gini_t, LOCAL), group_id, node_id, LOCAL);
       // new split nodes found
+      new_spl0  := JOIN(aggc, splt, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id AND LEFT.number = RIGHT.number, TRANSFORM(LEFT), LOCAL);
       node_base := MAX(nodes, node_id);
-      nc0:= PROJECT(node_cand0, TRANSFORM(gNodeInstDisc, SELF.value := node_base + COUNTER; SELF.depend := LEFT.value; SELF.level := p_level; SELF := LEFT; SELF := [];));
-      J := JOIN(this_set, nc0, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.depend,
-              TRANSFORM(gNodeInstDisc, SELF.node_id:=RIGHT.value, SELF.level:= RIGHT.level +1, SELF.value:= LEFT.depend, SELF:= LEFT ),LOOKUP);
-      RETURN pass_thru + nc0 + J;   // returning leaf nodes, new splits nodes and reassigned instances
+      new_split := PROJECT(new_spl0, TRANSFORM(gNodeInstDisc, SELF.value := node_base + COUNTER; SELF.depend := LEFT.value; SELF.level := p_level; SELF := LEFT; SELF := [];));
+      dnew_spl  := DISTRIBUTE(new_split, HASH(group_id, node_id));
+      // reasigning instances to new nodes
+      node_inst := JOIN(this_set, dnew_spl, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.depend,
+                      TRANSFORM(gNodeInstDisc, SELF.node_id:=RIGHT.value, SELF.level:= RIGHT.level +1, SELF.value:= LEFT.depend, SELF:= LEFT ), LOCAL);
+      RETURN pass_thru + new_split + node_inst;   // returning leaf nodes, new splits nodes and reassigned instances
     END;
     // generating best feature_selection-gini_impurity splits, loopfilter level = COUNTER let pass only the nodes to be splitted for any current level
     res := LOOP(depG, LEFT.level=COUNTER, COUNTER < depth , RndFeatSelPartitionGIBased(ROWS(LEFT), treeNum, fsNum, totFeat, COUNTER, Purity));
@@ -185,7 +178,6 @@ EXPORT Ensemble := MODULE
                                           SELF.new_node_id:=0, SELF:= LEFT));
     RETURN new_nodes + maxlevel_leafs;
   END;
-
   EXPORT FromDiscreteForest(DATASET(Types.NumericField) mod) := FUNCTION
     ML.FromField(mod, gSplitF,o, modelD_Map);
     RETURN o;
@@ -196,28 +188,32 @@ EXPORT Ensemble := MODULE
     RETURN out_model;
   END;
   // Function that locates instances into the deepest branch nodes (split) based on their attribute values
-  EXPORT gSplitInstD(DATASET(gSplitf) mod, DATASET(Types.DiscreteField) Indep) := FUNCTION
-    splits := mod(new_node_id <> 0); // separate split or branches
-    ind0   := DISTRIBUTE(indep, HASH(number, value));
-    spl0   := DISTRIBUTE(splits, HASH(number, value));
-    join0  := JOIN(Indep, splits, LEFT.number = RIGHT.number AND LEFT.value = RIGHT.value, LOCAL);
-    dist0  := DISTRIBUTE(join0, HASH(group_id, id));
-    sort0  := SORT(dist0, group_id, id, level, number, node_id, new_node_id, LOCAL);
-    dedup0 := DEDUP(sort0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id != RIGHT.node_id, KEEP 1, LEFT, LOCAL);
-    RETURN DEDUP(dedup0, LEFT.group_id = RIGHT.group_id AND LEFT.id = RIGHT.id AND LEFT.new_node_id = RIGHT.node_id, KEEP 1, RIGHT, LOCAL);
+  EXPORT gSplitInstancesD(DATASET(gSplitf) mod, DATASET(ML.Types.DiscreteField) Indep) := FUNCTION
+    inst_gnode:= RECORD(ML.Types.DiscreteField)
+      Types.t_Count group_id;
+      NodeID;
+    END;
+    depth:=MAX(mod, level);
+    roots:= mod(level = 1); // This will contains one Node record per Tree, 100 is a common value
+    ind0:= DISTRIBUTE(Indep, id);
+    inst_roots:= JOIN(ind0, roots, LEFT.number=RIGHT.number AND LEFT.value=RIGHT.value, TRANSFORM(inst_gnode, SELF:= LEFT, SELF:=RIGHT ), MANY LOOKUP);
+    loop_body(DATASET(inst_gnode) inst_gnodes, UNSIGNED2 p_level) := FUNCTION
+      nodes:= mod(level=p_level);
+      inst:= JOIN(inst_gnodes, ind0, LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number, TRANSFORM(inst_gnode, SELF.value:=RIGHT.value, SELF:= LEFT), LOCAL);
+      join1:= JOIN(inst, nodes, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.value, TRANSFORM(inst_gnode, SELF.node_id:=RIGHT.new_node_id, SELF.level:=LEFT.level+1, SELF:=LEFT), LOOKUP);
+      nxt_nodes:= mod(level=p_level +1);
+      RETURN JOIN(join1, nxt_nodes, LEFT.node_id=RIGHT.node_id, TRANSFORM(inst_gnode, SELF.number:=RIGHT.number, SELF.value:= RIGHT.value, SELF:=LEFT), LOOKUP);
+    END;
+    RETURN LOOP(inst_roots, depth, LEFT.number>0, loop_body(ROWS(LEFT), COUNTER));
   END;
   // Probability function for discrete independent values and model
   EXPORT ClassProbDistribForestD(DATASET(Types.DiscreteField) Indep, DATASET(Types.NumericField) mod) := FUNCTION
     nodes := FromDiscreteForest(mod);
-    leafs := nodes(new_node_id = 0);  // from final nodes
-    splitData_raw:= gSplitInstD(nodes, Indep);
-    splitData:= DISTRIBUTE(splitData_raw, id);
-    gClass:= JOIN(splitData, leafs, LEFT.new_node_id = RIGHT.node_id AND LEFT.group_id = RIGHT.group_id,
-              TRANSFORM(Types.DiscreteField, SELF.id:= LEFT.id, SELF.number := 1, SELF.value:= RIGHT.value), LOOKUP);
-    accClass:= TABLE(gClass, {id, number, value, cnt:= COUNT(GROUP)}, id, number, value, LOCAL);
-    tClass := TABLE(accClass, {id, number, tot:= SUM(GROUP, cnt)}, id, number, LOCAL);
-    sClass:= JOIN(accClass, tClass, LEFT.number=RIGHT.number AND LEFT.id=RIGHT.id, LOCAL);
-    RETURN PROJECT(sClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/LEFT.tot, SELF:= LEFT, SELF:=[]), LOCAL);
+    dataSplitted:= gSplitInstancesD(nodes, Indep);
+    accClass:= TABLE(dataSplitted, {id, value, cnt:= COUNT(GROUP)}, id, value, LOCAL);
+    tClass := TABLE(accClass, {id, tot:= SUM(GROUP, cnt)}, id, LOCAL);
+    sClass:= JOIN(accClass, tClass, LEFT.id=RIGHT.id, LOCAL);
+    RETURN PROJECT(sClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/LEFT.tot, SELF.number:= 1, SELF:= LEFT), LOCAL);
   END;
   // Classification function for discrete independent values and model
   EXPORT ClassifyDForest(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION

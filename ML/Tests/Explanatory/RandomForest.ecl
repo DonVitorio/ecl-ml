@@ -33,12 +33,8 @@ dep_Data:= TABLE(weather_Data,{id, play});
 //Medium dataset for tests
 indep_data:= TABLE(TE.MonkDS.Train_Data,{id, a1, a2, a3, a4, a5, a6});
 dep_data:= TABLE(TE.MonkDS.Train_Data,{id, class});
-
-ToField(indep_data, pr_indep);
-indepData := ML.Discretize.ByRounding(pr_indep);
-ToField(dep_data, pr_dep);
-depData := ML.Discretize.ByRounding(pr_dep);
 */
+
 //Medium Large dataset for tests
 indep_data:= TABLE(TE.AdultDS.Train_Data,{id, Age, WorkClass, education, education_num, marital_status, occupation, relationship, race, sex, capital_gain, capital_loss, hours_per_week, native_country});
 dep_data:= TABLE(TE.AdultDS.Train_Data,{id, Outcome});
@@ -57,18 +53,22 @@ OUTPUT(indepData, NAMED('indepData'), ALL);
 OUTPUT(depData, NAMED('depData'), ALL);
 */
 
-//Generating a random forest of 25 trees selecting 4 features for splits using impurity:=1.0 and max depth:= 25
+// Generating a random forest of 25 trees selecting 4 features for splits using impurity:=1.0 and max depth:= 25
 learner := Classify.RandomForest(25, 4, 1.0, 25);
 result := learner.LearnD(IndepData, DepData); // model to use when classifying
-//OUTPUT(result,NAMED('learnd_output'), ALL); // group_id represent number of tree
+// OUTPUT(result,NAMED('learnd_output'), ALL); // group_id represent number of tree
 model:= learner.model(result);  // transforming model to a easier way to read it
-OUTPUT(SORT(model, group_id, node_id, value),, '~victor::randomforest_model', OVERWRITE);
+// Showing only the first 100 records ("result limit" is 100 by default)
+OUTPUT(SORT(model, group_id, node_id, value), NAMED('model_ouput') );
+//OUTPUT(SORT(model, group_id, node_id, value), NAMED('model_ouput_all'), ALL);
+// To review the whole model use following line instead:
+//OUTPUT(SORT(model, group_id, node_id, value),, '~user::rdnforest_model', OVERWRITE); // stored in cluster
 
 //Class distribution for each Instance
 ClassDist:= learner.ClassProbDistribD(IndepData, result);
-//OUTPUT(ClassDist, NAMED('ClassDist'), ALL);
+OUTPUT(ClassDist, NAMED('ClassDist'), ALL);
 class:= learner.classifyD(IndepData, result); // classifying
-//OUTPUT(class, NAMED('class_result'), ALL); // conf show voting percentage
+OUTPUT(class, NAMED('class_result'), ALL); // conf show voting percentage
 
 //Measuring Performance of Classifier
 performance:= Classify.Compare(depData, class);
