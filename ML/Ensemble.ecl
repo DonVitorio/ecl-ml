@@ -13,9 +13,9 @@ EXPORT Ensemble := MODULE
     SELF.number := l.number;
     SELF.value := l.value;
   END;  
-  EXPORT modelD_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'new_node_id','5'},{'group_id',6}], {STRING orig_name; STRING assigned_name;});
-  EXPORT STRING modelD_fields := 'node_id,level,number,value,new_node_id,group_id';	// need to use field map to call FromField later
-  EXPORT modelC_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'high_fork','5'},{'new_node_id','6'},{'group_id',7}], {STRING orig_name; STRING assigned_name;});
+  EXPORT modelD_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'new_node_id','5'},{'support',6},{'group_id',7}], {STRING orig_name; STRING assigned_name;});
+  EXPORT STRING modelD_fields := 'node_id,level,number,value,new_node_id,support,group_id';	// need to use field map to call FromField later
+  EXPORT modelC_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'high_fork','5'},{'new_node_id','6'},{'support',7},{'group_id',8}], {STRING orig_name; STRING assigned_name;});
   EXPORT STRING modelC_fields := 'node_id,level,number,value,high_fork,new_node_id,group_id';	// need to use field map to call FromField later
   EXPORT NodeID := RECORD
     t_node node_id;
@@ -25,6 +25,7 @@ EXPORT Ensemble := MODULE
     NodeID;
     Types.DiscreteField;
     Types.t_Discrete depend; // The dependant value
+    t_Count support:=0;             // Support during learning
   END;
   EXPORT NodeInstContinuous := RECORD
     NodeID;
@@ -34,9 +35,10 @@ EXPORT Ensemble := MODULE
   END;
   EXPORT SplitF := RECORD		// data structure for splitting results
     NodeID;
-    ML.Types.t_FieldNumber number; // The column used to split
-    ML.Types.t_Discrete value; // The value for the column in question
-    t_node new_node_id; // The new node that value goes to
+    ML.Types.t_FieldNumber number;  // The column used to split
+    ML.Types.t_Discrete value;      // The value for the column in question
+    t_node new_node_id;             // The new node that value goes to
+    t_Count support:=0;             // Support during learning
   END;
   EXPORT SplitC := RECORD		// data structure for splitting results
     NodeID;
@@ -120,7 +122,7 @@ EXPORT Ensemble := MODULE
     gNodeInstDisc RndFeatSelPartitionGIBased(DATASET(gNodeInstDisc) nodes, t_Count nTrees, t_Count kFeatSel, t_Count mTotFeats, t_Count p_level, REAL Purity=1.0):= FUNCTION
       Purities      := ML.Utils.Gini(nodes, node_id, depend);   // Compute the purities for each node
       PureEnough    := Purities(1-Purity >= gini);              // Filtering pure nodes
-      pureNodes     := JOIN(nodes, PureEnough, LEFT.node_id = RIGHT.node_id, TRANSFORM({gNodeInstDisc, BOOLEAN pure:= FALSE}, SELF.pure:=RIGHT.node_id>0, SELF:=LEFT, ), LEFT OUTER);
+      pureNodes     := JOIN(nodes, PureEnough, LEFT.node_id = RIGHT.node_id, TRANSFORM({gNodeInstDisc, BOOLEAN pure:= FALSE}, SELF.pure:=RIGHT.node_id>0, SELF.support:= RIGHT.TotalCnt, SELF:=LEFT, ), LEFT OUTER);
       pass_thru     := PROJECT(pureNodes(pure = TRUE), gNodeInstDisc, LOCAL);
       nodes_toSplit := PROJECT(pureNodes(pure = FALSE), gNodeInstDisc, LOCAL);           
       // Gather only the data needed for each LOOP iteration,
@@ -146,7 +148,8 @@ EXPORT Ensemble := MODULE
       // new split nodes found
       new_spl0  := JOIN(aggc, splt, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id AND LEFT.number = RIGHT.number, TRANSFORM(LEFT), LOCAL);
       node_base := MAX(nodes, node_id);
-      new_split := PROJECT(new_spl0, TRANSFORM(gNodeInstDisc, SELF.value := node_base + COUNTER; SELF.depend := LEFT.value; SELF.level := p_level; SELF := LEFT; SELF := [];));
+      new_split := PROJECT(new_spl0, TRANSFORM(gNodeInstDisc, SELF.value:= node_base + COUNTER; SELF.depend:= LEFT.value;
+                                               SELF.level:= p_level; SELF.support:= LEFT.TCnt; SELF := LEFT; SELF := [];));
       dnew_spl  := DISTRIBUTE(new_split, HASH(group_id, node_id));
       // reasigning instances to new nodes
       node_inst := JOIN(this_set, dnew_spl, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.depend,
@@ -171,10 +174,8 @@ EXPORT Ensemble := MODULE
       res.depend;
       Cnt := COUNT(GROUP);
     END;
-    depCnt      := TABLE(res(id>0),mode_r, group_id, node_id, level, depend, FEW);
-    depCntSort  := SORT(depCnt, group_id, node_id, -cnt); // if more than one dependent value for node_id
-    depCntDedup := DEDUP(depCntSort, group_id, node_id);     // the class value with more counts is selected
-    maxlevel_leafs:= PROJECT(depCntDedup, TRANSFORM(gSplitF, SELF.number:=0, SELF.value:= LEFT.depend,
+    depCnt := TABLE(res(id>0),mode_r, group_id, node_id, level, depend, FEW);
+    maxlevel_leafs:= PROJECT(depCnt, TRANSFORM(gSplitF, SELF.number:=0, SELF.value:= LEFT.depend, SELF.support:= LEFT.cnt;
                                           SELF.new_node_id:=0, SELF:= LEFT));
     RETURN new_nodes + maxlevel_leafs;
   END;
@@ -188,31 +189,56 @@ EXPORT Ensemble := MODULE
     RETURN out_model;
   END;
   // Function that locates instances into the deepest branch nodes (split) based on their attribute values
-  EXPORT gSplitInstancesD(DATASET(gSplitf) mod, DATASET(ML.Types.DiscreteField) Indep) := FUNCTION
+  EXPORT gSplitInstancesD(DATASET(gSplitF) mod, DATASET(ML.Types.DiscreteField) Indep) := FUNCTION
+    wNode := RECORD(gSplitF)
+      REAL weight:= 1.0;
+    END;
     inst_gnode:= RECORD(ML.Types.DiscreteField)
       Types.t_Count group_id;
       NodeID;
+      REAL weight:= 1.0;
+    END;
+    id_group := RECORD
+      Types.t_RecordID    id;
+      Types.t_Count group_id;
     END;
     depth:=MAX(mod, level);
-    roots:= mod(level = 1); // This will contains one Node record per Tree, 100 is a common value
+    dMod := DISTRIBUTE(mod, HASH(node_id, number));
+    aCCmod := TABLE(dMod, {node_id, number, tot:= SUM(GROUP, support)}, node_id, number, LOCAL);
+    wNodes := JOIN(dMod, aCCmod, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number, TRANSFORM(wNode,
+                    SELF.weight:= LEFT.support/RIGHT.tot, SELF:=LEFT), LOCAL);
     ind0:= DISTRIBUTE(Indep, id);
-    inst_roots:= JOIN(ind0, roots, LEFT.number=RIGHT.number AND LEFT.value=RIGHT.value, TRANSFORM(inst_gnode, SELF:= LEFT, SELF:=RIGHT ), MANY LOOKUP);
+    root:= mod(level = 1); // This will contains one Node record per Tree, 100 is a common value
+    inst_root:= JOIN(ind0, root, LEFT.number=RIGHT.number AND LEFT.value=RIGHT.value, TRANSFORM(inst_gnode, SELF:= LEFT, SELF:=RIGHT ), MANY LOOKUP);
+    nTree:= MAX(root, group_id);
+    pivot:= root[1].number;
+    fake_root:=  NORMALIZE(ind0(number = pivot), nTree, TRANSFORM(id_group, SELF.id:= LEFT.id, SELF.group_id:= COUNTER), LOCAL);
+    no_root := JOIN(fake_root, inst_root, LEFT.id = RIGHT.id AND LEFT.group_id = RIGHT.group_id,TRANSFORM(LEFT), LEFT ONLY, LOCAL) ;
+    nr_inst := JOIN(no_root, root, LEFT.group_id = RIGHT.group_id, TRANSFORM(inst_gnode, SELF.id:= LEFT.id, SELF:= RIGHT), LOOKUP);
+    inst_gnodes0:= inst_root + nr_inst;
     loop_body(DATASET(inst_gnode) inst_gnodes, UNSIGNED2 p_level) := FUNCTION
-      nodes:= mod(level=p_level);
+      nodesN:= wNodes(level=p_level);
       inst:= JOIN(inst_gnodes, ind0, LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number, TRANSFORM(inst_gnode, SELF.value:=RIGHT.value, SELF:= LEFT), LOCAL);
-      join1:= JOIN(inst, nodes, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.value, TRANSFORM(inst_gnode, SELF.node_id:=RIGHT.new_node_id, SELF.level:=LEFT.level+1, SELF:=LEFT), LOOKUP);
-      nxt_nodes:= mod(level=p_level +1);
-      RETURN JOIN(join1, nxt_nodes, LEFT.node_id=RIGHT.node_id, TRANSFORM(inst_gnode, SELF.number:=RIGHT.number, SELF.value:= RIGHT.value, SELF:=LEFT), LOOKUP);
+      join0:= JOIN(inst, nodesN, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.value, LOOKUP, LEFT OUTER);
+      miss_val:=JOIN(join0(new_node_id=0), nodesN, LEFT.node_id=RIGHT.node_id, TRANSFORM(inst_gnode, SELF.weight:= LEFT.weight*RIGHT.weight, SELF.level:=LEFT.level+1, SELF.node_id:=RIGHT.new_node_id, SELF:=LEFT), LOOKUP, MANY);
+      match_val:=PROJECT(join0(new_node_id>0), TRANSFORM(inst_gnode, SELF.node_id:=LEFT.new_node_id, SELF.level:=LEFT.level+1, SELF:=LEFT), LOCAL);
+      all_val:= miss_val + match_val;
+      nxt_nodes:= wNodes(level=p_level +1);
+      RETURN JOIN(all_val, nxt_nodes, LEFT.node_id=RIGHT.node_id, TRANSFORM(inst_gnode, SELF.number:=RIGHT.number, SELF.value:= RIGHT.value, SELF:=LEFT), LOOKUP);
     END;
-    RETURN LOOP(inst_roots, depth, LEFT.number>0, loop_body(ROWS(LEFT), COUNTER));
+    RETURN LOOP(inst_gnodes0, depth, LEFT.number>0, loop_body(ROWS(LEFT), COUNTER));
   END;
   // Probability function for discrete independent values and model
   EXPORT ClassProbDistribForestD(DATASET(Types.DiscreteField) Indep, DATASET(Types.NumericField) mod) := FUNCTION
-    nodes := FromDiscreteForest(mod);
+    nodes  := FromDiscreteForest(mod);
     dataSplitted:= gSplitInstancesD(nodes, Indep);
-    accClass:= TABLE(dataSplitted, {id, value, cnt:= COUNT(GROUP)}, id, value, LOCAL);
-    tClass := TABLE(accClass, {id, tot:= SUM(GROUP, cnt)}, id, LOCAL);
-    sClass:= JOIN(accClass, tClass, LEFT.id=RIGHT.id, LOCAL);
+    dDS    := DISTRIBUTE(dataSplitted, HASH(id));
+    accDS  := TABLE(dDS, {id, group_id, value, sumWeight:= SUM(GROUP, weight)}, id, group_id, value, LOCAL);
+    sortDS := SORT(accDS, id, group_id, value, -sumWeight, LOCAL);
+    ddupDS := DEDUP(sortDS, id, group_id, LOCAL);
+    accCDS := TABLE(ddupDS, {id, value, cnt:= COUNT(GROUP)}, id, value, LOCAL);
+    tClass := TABLE(accCDS, {id, tot:= SUM(GROUP, cnt)}, id, LOCAL);
+    sClass := JOIN(accCDS, tClass, LEFT.id=RIGHT.id, LOCAL);
     RETURN PROJECT(sClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/LEFT.tot, SELF.number:= 1, SELF:= LEFT), LOCAL);
   END;
   // Classification function for discrete independent values and model

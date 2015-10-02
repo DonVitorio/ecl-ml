@@ -387,8 +387,9 @@ EXPORT Trees := MODULE
 	EXPORT PartitionInfoGainRatioBased	(DATASET(wNode) nodes, t_level p_level) := FUNCTION
 		this_set0 := nodes(level = p_level);
 		node_base:= MAX(nodes, node_id);
-		// nodes could come from different splits having different sets of remaining attributes
-		min_num:= TABLE(this_set0,{node_id, min_number:= MIN(GROUP, number)}, node_id);
+    // nodes could come from different splits having different sets of remaining attributes
+    //min_num:= TABLE(this_set0,{node_id, min_number:= MIN(GROUP, number)}, node_id, MERGE); // MERGE would work for bigger datasets, but FEW is faster
+    min_num:= TABLE(this_set0,{node_id, min_number:= MIN(GROUP, number)}, node_id, FEW);
 		this_set1:= JOIN(this_set0, min_num, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.min_number, LOOKUP);
 		// Calculating Information Entropy of Nodes
 		top_dep := TABLE(this_set1, {node_id, depend, cnt:= COUNT(GROUP)}, node_id, depend);
