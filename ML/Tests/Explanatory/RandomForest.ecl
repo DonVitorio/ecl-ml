@@ -1,4 +1,4 @@
-﻿IMPORT * FROM ML;
+IMPORT * FROM ML;
 IMPORT ML.Tests.Explanatory as TE;
 /* 
 //Tiny dataset for tests
@@ -53,8 +53,8 @@ OUTPUT(indepData, NAMED('indepData'), ALL);
 OUTPUT(depData, NAMED('depData'), ALL);
 */
 
-// Generating a random forest of 25 trees selecting 4 features for splits using impurity:=1.0 and max depth:= 25
-learner := Classify.RandomForest(25, 4, 1.0, 25);
+// Generating a random forest of 100 trees selecting 6 features for splits using impurity:=1.0 and max depth:= 125. Split using GiniImpurity = TRUE (default)
+learner := Classify.RandomForest(100, 6, 1.0, 125);
 result := learner.LearnD(IndepData, DepData); // model to use when classifying
 // OUTPUT(result,NAMED('learnd_output'), ALL); // group_id represent number of tree
 model:= learner.model(result);  // transforming model to a easier way to read it
