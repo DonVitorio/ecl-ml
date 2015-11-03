@@ -2,15 +2,12 @@
 IMPORT * FROM $;
 IMPORT $.Mat;
 IMPORT * FROM ML.Types;
-IMPORT * FROM ML.Sampling;
 
 EXPORT Trees := MODULE
   EXPORT model_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'new_node_id','5'},{'support','6'}], {STRING orig_name; STRING assigned_name;});
   EXPORT STRING model_fields := 'node_id,level,number,value,new_node_id,support';	// need to use field map to call FromField later
   EXPORT modelC_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'high_fork','5'},{'new_node_id','6'}], {STRING orig_name; STRING assigned_name;});
   EXPORT STRING modelC_fields := 'node_id,level,number,value,high_fork,new_node_id';	// need to use field map to call FromField later
-  EXPORT t_node := INTEGER4; // Assumes a maximum of 32 levels presently
-  EXPORT t_level := UNSIGNED2; // Would allow up to 2^256 levels
   EXPORT NodeID := RECORD
     t_node node_id; // The node-id for a given point
     t_level level; // The level for a given point
@@ -361,8 +358,9 @@ EXPORT Trees := MODULE
 // changed to return a dataset with branch nodes and final nodes
 	EXPORT SplitsGiniImpurBased(DATASET(ML.Types.DiscreteField) ind,DATASET(ML.Types.DiscreteField) dep,
 																t_level Depth=10,REAL Purity=1.0) := FUNCTION
-		ind0 := ML.Utils.FatD(ind); // Ensure no sparsity in independents
-		NodeInstDiscrete init(ind0 le,dep ri) := TRANSFORM
+//		ind0 := ML.Utils.FatD(ind); // Ensure no sparsity in independents
+	ind0:= ind;
+	NodeInstDiscrete init(ind0 le,dep ri) := TRANSFORM
 			SELF.node_id := 1;
 			SELF.level := 1;
 			SELF.depend := ri.value;	// Actually copies the dependant value to EVERY node - paying memory to avoid downstream cycles
@@ -856,7 +854,8 @@ EXPORT Trees := MODULE
   //    maxLevel    stop learning criteria, either tree's level reachs maxLevel depth or no more split can be done.
   EXPORT SplitBinaryCBased(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep, t_Count minNumObj=2, t_level maxLevel=32) := FUNCTION
     depth   := MIN(1023, maxLevel); // Max number of iterations when building trees (max 1023 levels)
-    ind0 := ML.Utils.Fat(Indep);    // Ensure no sparsity in independents
+//    ind0 := ML.Utils.Fat(Indep);    // Ensure no sparsity in independents
+    ind0 := Indep;
     cNode init(ind0 le, dep ri) := TRANSFORM
       SELF.node_id := 1;
       SELF.level := 1;

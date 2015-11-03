@@ -16,6 +16,9 @@ EXPORT t_FieldSign := INTEGER1;
 EXPORT t_Discrete := INTEGER4; // The number of 'groups' a population may be divided into - negative to allow for classificaiton to 'undershoot'
 EXPORT t_Item := UNSIGNED4; // Currently allows up to 9B different elements
 EXPORT t_Count := t_RecordID; // Possible to count every record
+// Decision Trees and Random Forest basics
+EXPORT t_node := INTEGER4; // Assumes a maximum of 32 levels presently
+EXPORT t_level := UNSIGNED2; // Would allow up to 2^256 levels
 
 EXPORT NumericField := RECORD
   t_RecordID id;

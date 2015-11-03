@@ -1,13 +1,7 @@
-﻿IMPORT * FROM $;
-IMPORT $.Mat;
-IMPORT ML;
+﻿IMPORT * FROM ML;
+IMPORT * FROM ML.Types;
 
 EXPORT Ensemble := MODULE
-  SHARED t_node := INTEGER4;
-  SHARED t_level := UNSIGNED2;
-  SHARED t_Count:= Types.t_Count;
-  SHARED t_Index:= INTEGER4;
-  SHARED l_result:= Types.l_result;
   SHARED Types.DiscreteField GetDRecords(Types.DiscreteField l, Sampling.idListGroupRec r) := TRANSFORM
     SELF.id := r.id;
     SELF.number := l.number;
@@ -72,7 +66,7 @@ EXPORT Ensemble := MODULE
     SELF.new_id			:= r.id;
     SELF						:= l;
   END;
-  SHARED NxKoutofM(t_Index N, Types.t_FieldNumber K, Types.t_FieldNumber M) := FUNCTION
+  SHARED NxKoutofM(t_Count N, Types.t_FieldNumber K, Types.t_FieldNumber M) := FUNCTION
     rndFeatRec:= RECORD
       t_count	      gNum   :=0;
       Types.t_FieldNumber number :=0;
@@ -95,7 +89,7 @@ EXPORT Ensemble := MODULE
 //       selects fsNum out of total number of features, they must start at 1 and cannot exist a gap in the numeration.
 //       Gini Impurity's default parameters: Purity = 1.0 and maxLevel (Depth) = 32 (up to 126 max iterations)
 // more info http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#overview
-  EXPORT SplitFeatureSampleGI(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep, t_Index treeNum, t_Count fsNum, REAL Purity=1.0, t_level maxLevel=32) := FUNCTION
+  EXPORT SplitFeatureSampleGI(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep, t_Count treeNum, t_Count fsNum, REAL Purity=1.0, t_level maxLevel=32) := FUNCTION
     N       := MAX(Dep, id);       // Number of Instances
     totFeat := COUNT(Indep(id=N)); // Number of Features
     depth   := MIN(255, maxLevel); // Max number of iterations when building trees (max 256 levels)
@@ -192,7 +186,7 @@ EXPORT Ensemble := MODULE
                                           SELF.new_node_id:=0, SELF:= LEFT));
     RETURN new_nodes + maxlevel_leafs;
   END;
-  EXPORT SplitFeatureSampleIGR(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep, t_Index treeNum, t_Count fsNum, t_level maxLevel=32) := FUNCTION
+  EXPORT SplitFeatureSampleIGR(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep, t_Count treeNum, t_Count fsNum, t_level maxLevel=32) := FUNCTION
     N       := MAX(Dep, id);       // Number of Instances
     totFeat := COUNT(Indep(id=N)); // Number of Features
     depth   := MIN(255, maxLevel); // Max number of iterations when building trees (max 256 levels)
@@ -507,7 +501,7 @@ EXPORT Ensemble := MODULE
 // Note: returns treeNum Binary Decision Trees, split based on Gini Impurity
 //       it selects fsNum out of total number of features, they must start at 1 and cannot exist a gap in the numeration.
 //       Gini Impurity's default parameters: Purity = 1.0 and maxLevel (Depth) = 32 (up to 126 max iterations)
-  EXPORT SplitFeatureSampleGIBin(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep, t_Index treeNum, t_Count fsNum, REAL Purity=1.0, t_level maxLevel=32) := FUNCTION
+  EXPORT SplitFeatureSampleGIBin(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep, t_Count treeNum, t_Count fsNum, REAL Purity=1.0, t_level maxLevel=32) := FUNCTION
     N       := MAX(Dep, id);       // Number of Instances
     totFeat := COUNT(Indep(id=N)); // Number of Features
     depth   := MIN(126, maxLevel); // Max number of iterations when building trees (max 126 levels)
@@ -515,7 +509,8 @@ EXPORT Ensemble := MODULE
     grList:= ML.Sampling.GenerateNSampleList(treeNum, N); // the number of records will be N * treeNum
     groupDep0:= JOIN(dep, grList, LEFT.id = RIGHT.oldId, GroupDepRecords(LEFT, RIGHT));
     groupDep:=DISTRIBUTE(groupDep0, HASH(id));
-    ind0 := ML.Utils.Fat(Indep); // Ensure no sparsity in independents
+//    ind0 := ML.Utils.Fat(Indep); // Ensure no sparsity in independents
+    ind0:= Indep;
     gNodeInstCont init(Types.NumericField ind, DepGroupedRec depG) := TRANSFORM
       SELF.group_id := depG.group_id;
       SELF.node_id := depG.group_id;

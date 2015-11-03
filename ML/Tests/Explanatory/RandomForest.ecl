@@ -1,3 +1,4 @@
+﻿//RandomForest.ecl
 IMPORT * FROM ML;
 IMPORT ML.Tests.Explanatory as TE;
 /* 
@@ -53,8 +54,8 @@ OUTPUT(indepData, NAMED('indepData'), ALL);
 OUTPUT(depData, NAMED('depData'), ALL);
 */
 
-// Generating a random forest of 100 trees selecting 6 features for splits using impurity:=1.0 and max depth:= 125. Split using GiniImpurity = TRUE (default)
-learner := Classify.RandomForest(100, 6, 1.0, 125);
+// Generating a random forest of 100 trees selecting 7 features for splits using impurity:=1.0 and max depth:= 255. Split using GiniImpurity = TRUE (default)
+learner := Classify.RandomForest(100, 7, 1.0, 255);
 result := learner.LearnD(IndepData, DepData); // model to use when classifying
 // OUTPUT(result,NAMED('learnd_output'), ALL); // group_id represent number of tree
 model:= learner.model(result);  // transforming model to a easier way to read it
@@ -76,6 +77,7 @@ OUTPUT(performance.CrossAssignments, NAMED('CrossAssig'));
 OUTPUT(performance.RecallByClass, NAMED('RecallByClass'));
 OUTPUT(performance.PrecisionByClass, NAMED('PrecisionByClass'));
 OUTPUT(performance.FP_Rate_ByClass, NAMED('FP_Rate_ByClass'));
+OUTPUT(performance.Accuracy, NAMED('Accuracy'));
 //AUC_ROC returns all the ROC points and the value of the Area under the curve in the LAST_RECORD(AUC FIELD)
 AUC0:= Classify.AUC_ROC(ClassDist, 0, depData); //Area under ROC Curve for class "0"
 OUTPUT(AUC0, ALL, NAMED('AUC_0'));

@@ -1289,7 +1289,7 @@ The model  is used to predict the class from new examples.
 /*	
 		Decision Tree Learning using Gini Impurity-Based criterion
 */
-    EXPORT GiniImpurityBased(INTEGER1 Depth=10, REAL Purity=1.0):= MODULE(DEFAULT)
+    EXPORT GiniImpurityBased(t_level Depth=10, REAL Purity=1.0):= MODULE(DEFAULT)
       EXPORT LearnD(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
         nodes := ML.Trees.SplitsGiniImpurBased(Indep, Dep, Depth, Purity);
         RETURN ML.Trees.ToDiscreteTree(nodes);
@@ -1329,7 +1329,7 @@ The model  is used to predict the class from new examples.
       minNumObj   minimum number of instances in a leaf node, used in splitting process
       maxLevel    stop learning criteria, either tree's level reachs maxLevel depth or no more split can be done.
 */
-    EXPORT C45Binary(t_Count minNumObj=2, ML.Trees.t_level maxLevel=32) := MODULE(DEFAULT)
+    EXPORT C45Binary(t_Count minNumObj=2, t_level maxLevel=32) := MODULE(DEFAULT)
       EXPORT LearnC(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
         nodes := Trees.SplitBinaryCBased(Indep, Dep, minNumObj, maxLevel);
         RETURN ML.Trees.ToNumericTree(nodes);
@@ -1362,7 +1362,7 @@ Configuration Input
    Purity     p <= 1.0
    Depth      max tree level
 */
-  EXPORT RandomForest(t_Count treeNum, t_Count fsNum, REAL Purity=1.0, INTEGER1 Depth=32, BOOLEAN GiniSplit = TRUE):= MODULE
+  EXPORT RandomForest(t_Count treeNum, t_Count fsNum, REAL Purity=1.0, t_level Depth=32, BOOLEAN GiniSplit = TRUE):= MODULE
     EXPORT LearnD(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
       nodes := IF(GiniSplit, Ensemble.SplitFeatureSampleGI(Indep, Dep, treeNum, fsNum, Purity, Depth), 
                              Ensemble.SplitFeatureSampleIGR(Indep, Dep, treeNum, fsNum, Depth));
@@ -1408,88 +1408,6 @@ Configuration Input
   // label: threshold, point: (threshold's false negative rate, threshold's true positive rate).
   // The area under the ROC curve is returned in the AUC field of the last record.
   // Note: threshold = 100 means classifying all instances as negative, it is not necessarily part of the curve
-  EXPORT AUC_ROC(DATASET(l_result) classProbDist, Types.t_Discrete positiveClass, DATASET(Types.DiscreteField) Dep) := FUNCTION
-    SHARED cntREC:= RECORD
-      Types.t_FieldNumber classifier;  // The classifier in question (value of 'number' on outcome data)
-      Types.t_Discrete  c_actual;      // The value of c provided
-      Types.t_FieldReal score :=-1;
-      Types.t_count     tp_cnt:=0;
-      Types.t_count     fn_cnt:=0;
-      Types.t_count     fp_cnt:=0;
-      Types.t_count     tn_cnt:=0;
-    END;
-    SHARED compREC:= RECORD(cntREC)
-      Types.t_Discrete  c_modeled;
-    END;
-    classOfInterest := classProbDist(value = positiveClass);
-    compared:= JOIN(classOfInterest, Dep, LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number,
-                            TRANSFORM(compREC, SELF.classifier:= LEFT.number, SELF.c_actual:=RIGHT.value,
-                            SELF.c_modeled:=LEFT.value, SELF.score:=LEFT.conf), HASH);
-    sortComp:= SORT(compared, score);
-    coi_acc:= TABLE(sortComp, {classifier, score, cntPos:= COUNT(GROUP, c_actual = c_modeled),
-                                  cntNeg:= COUNT(GROUP, c_actual<>c_modeled)}, classifier, score, LOCAL);
-    coi_tot:= TABLE(coi_acc, {classifier, totPos:= SUM(GROUP, cntPos), totNeg:= SUM(GROUP, cntNeg)}, classifier, FEW);
-    totPos:=EVALUATE(coi_tot[1], totPos);
-    totNeg:=EVALUATE(coi_tot[1], totNeg);
-    // Count and accumulate number of TP, FP, TN and FN instances for each threshold (score)
-    acc_sorted:= PROJECT(coi_acc, TRANSFORM(cntREC, SELF.c_actual:= positiveClass, SELF.fn_cnt:= LEFT.cntPos,
-                                  SELF.tn_cnt:= LEFT.cntNeg, SELF:= LEFT), LOCAL);
-    cntREC accNegPos(cntREC l, cntREC r) := TRANSFORM
-      deltaPos:= l.fn_cnt + r.fn_cnt;
-      deltaNeg:= l.tn_cnt + r.tn_cnt;
-      SELF.score:= r.score;
-      SELF.tp_cnt:=  totPos - deltaPos;
-      SELF.fn_cnt:=  deltaPos;
-      SELF.fp_cnt:=  totNeg - deltaNeg;
-      SELF.tn_cnt:= deltaNeg;
-      SELF:= r;
-    END;
-    cntNegPos:= ITERATE(acc_sorted, accNegPos(LEFT, RIGHT));
-    accnew := DATASET([{1,positiveClass,-1,totPos,0,totNeg,0}], cntREC) + cntNegPos;
-    curvePoint:= RECORD
-      Types.t_Count       id;
-      Types.t_FieldNumber classifier;
-      Types.t_FieldReal   thresho;
-      Types.t_FieldReal   fpr;
-      Types.t_FieldReal   tpr;
-      Types.t_FieldReal   deltaPos:=0;
-      Types.t_FieldReal   deltaNeg:=0;
-      Types.t_FieldReal   cumNeg:=0;
-      Types.t_FieldReal   AUC:=0;
-    END;
-    // Transform all into ROC curve points
-    rocPoints:= PROJECT(accnew, TRANSFORM(curvePoint, SELF.id:=COUNTER, SELF.thresho:=LEFT.score,
-                                SELF.fpr:= LEFT.fp_cnt/totNeg, SELF.tpr:= LEFT.tp_cnt/totPos, SELF.AUC:=IF(totNeg=0,1,0) ,SELF:=LEFT));
-    // Calculate the area under the curve (cumulative iteration)
-    curvePoint rocArea(curvePoint l, curvePoint r) := TRANSFORM
-      deltaPos  := if(l.tpr > r.tpr, l.tpr - r.tpr, 0.0);
-      deltaNeg  := if( l.fpr > r.fpr, l.fpr - r.fpr, 0.0);
-      SELF.deltaPos := deltaPos;
-      SELF.deltaNeg := deltaNeg;
-      // A classification without incorrectly classified instances must return AUC = 1
-      SELF.AUC      := IF(r.fpr=0 AND l.tpr=0 AND r.tpr=1, 1, l.AUC) + deltaPos * (l.cumNeg + 0.5* deltaNeg);
-      SELF.cumNeg   := l.cumNeg + deltaNeg;
-      SELF:= r;
-    END;
-    RETURN ITERATE(rocPoints, rocArea(LEFT, RIGHT));
-  END;
-  EXPORT iCVResults(DATASET(DiscreteField) idepN, DATASET(DiscreteField) it_depN, DATASET(l_result) iclassN, DATASET(l_result) iCPDN) := MODULE
-    SHARED classes := TABLE(idepN,{number, value}, number, value);
-    NumericField getAUC(RECORDOF(classes) cl, INTEGER C) := TRANSFORM
-      AUC_X:= AUC_ROC(iclassN, cl.value, it_depN);
-      myAUC:= AUC_X[COUNT(AUC_X)].AUC;
-      SELF.id     := C;
-      SELF.number := cl.value;
-      SELF.value  := myAUC;
-    END;
-    EXPORT AUC_ROC:= PROJECT(classes, getAUC(LEFT, COUNTER));
-    SHARED TestModule:= Compare(it_depN, iclassN);
-    EXPORT CrossAssignments := TestModule.CrossAssignments;
-    EXPORT RecallByClass    := TestModule.RecallByClass;
-    EXPORT PrecisionByClass := TestModule.PrecisionByClass;
-    EXPORT FP_Rate_ByClass  := TestModule.FP_Rate_ByClass;
-    EXPORT Accuracy         := TestModule.Accuracy;
-  END;
 
   EXPORT AUCcurvePoint:= RECORD
     Types.t_Count       id;
@@ -1503,7 +1421,7 @@ Configuration Input
     Types.t_FieldReal   cumNeg:=0;
     Types.t_FieldReal   AUC:=0;
   END;  
-  EXPORT mAUC_ROC(DATASET(l_result) classProbDist, Types.t_Discrete positiveClass, DATASET(Types.DiscreteField) allDep) := FUNCTION
+  EXPORT AUC_ROC(DATASET(l_result) classProbDist, Types.t_Discrete positiveClass, DATASET(Types.DiscreteField) allDep) := FUNCTION
     SHARED cntREC:= RECORD
       Types.t_FieldNumber classifier;  // The classifier in question (value of &amp;apos;number&amp;apos; on outcome data)
       Types.t_Discrete  c_actual;      // The value of c provided
@@ -1518,9 +1436,6 @@ Configuration Input
     SHARED compREC:= RECORD(cntREC)
       Types.t_Discrete  c_modeled;
     END;
-    // zeroCPD         := PROJECT(classProbDist(conf = 1.0), TRANSFORM(l_result, SELF.conf:= 0, SELF:= LEFT));
-    // completeCPD     := classProbDist + zeroCPD;
-    // classOfInterest := completeCPD(value = positiveClass);
     classOfInterest := classProbDist(value = positiveClass);
     dCPD  := DISTRIBUTE(classOfInterest, HASH(id));
     dDep  := DISTRIBUTE(allDep, HASH(id));
