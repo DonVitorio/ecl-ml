@@ -1,7 +1,7 @@
 ﻿IMPORT * FROM ML;
 IMPORT * FROM $;
 //NaiveBayes classifier
-trainer:= ML.Classify.NaiveBayes;
+trainer:= ML.Classify.NaiveBayes();
 
 // Monk Dataset - Discrete dataset 124 instances x 6 attributes + class
 MonkData:= MonkDS.Train_Data;

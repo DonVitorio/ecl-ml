@@ -4,7 +4,8 @@ IMPORT Std.Str;
 EXPORT Utils := MODULE
 
 EXPORT Pi := 3.1415926535897932384626433;
-
+EXPORT Base := 1000; // ID Base - all ids should be higher than this  
+  
 EXPORT REAL8 Fac(UNSIGNED2 i) := BEGINC++
   double accum = 1.0;
 	for ( int j = 2; j <= i; j++ )
@@ -285,6 +286,48 @@ EXPORT FatD(DATASET(Types.DiscreteField) d0,Types.t_Discrete v=0) := FUNCTION
 	// subtract from 'n' those values that already exist
 	n1 := JOIN(n,dn,LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number,TRANSFORM(LEFT),LEFT ONLY,LOCAL);
 	RETURN n1+dn;
+END;
+
+/*  This FUNCTION was created in order to read a Sparse ARFF file and return a DATASET(ML.Types.DiscreteField) with only the non default values.
+    Example for default value = 0:
+    //ARFF file               | //Sparse ARFF file       | //Sparse Types.DiscreteField DS
+                              | attr index starts in 0   | attr index starts in 1
+    @data                     | @data                    | //defValue:= 0, posclass:=1 , negclass:= 0
+    0, 0, 1, 0, 0, posclass   | {2 1, 5 posclass}        | DATASET([{1, 3, 1}, {1, 6, 1},
+    2, 0, 0, 0, 1, posclass   | {0 2, 4 1, 5 posclass}   |          {2, 1, 2}, {2, 5, 1}, {2, 6, 1},
+    0, 0, 0, 0, 2, negclass   | {4 2, 5 negclass}        |          {3, 5, 2}, {3, 6, 0}], Types.DiscreteField);
+*/
+// Based on Richard Taylor's SparseARFF.ConvertFlatFile and John Holt's suggestions
+EXPORT SparseARFFfileToDiscreteField(STRING fileName) := FUNCTION
+  InDS    := DATASET(fileName, {STRING Line}, CSV(SEPARATOR([])));
+  ParseDS := PROJECT(InDS, TRANSFORM({UNSIGNED RecID, STRING Line}, SELF.RecID:= COUNTER, SELF := LEFT));
+  //Parse the fields and values out
+  PATTERN ws       := ' ';
+  PATTERN RecStart := '{';
+  PATTERN ValEnd   := '}' | ',';
+  PATTERN FldNum   := PATTERN('[0-9]')+;
+  PATTERN DataQ    := '"' PATTERN('[ a-zA-Z0-9]')+ '"';
+  PATTERN DataNQ   := PATTERN('[a-zA-Z0-9]')+;
+  PATTERN DataVal  := DataQ | DataNQ;
+  PATTERN FldVal   := OPT(RecStart) FldNum ws DataVal ValEnd;
+  OutRec := RECORD
+    UNSIGNED RecID;
+    STRING   FldName;
+    STRING   FldVal;
+  END;
+  Types.DiscreteField XF(ParseDS L) := TRANSFORM
+    SELF.id     := L.RecID;
+    SELF.number := (TYPEOF(SELF.number))MATCHTEXT(FldNum) + 1;
+    SELF.value  := (TYPEOF(SELF.value))MATCHTEXT(DataVal);
+  END;
+  RETURN PARSE(ParseDS, Line, FldVal, XF(LEFT));
+END;
+EXPORT SparseARFFfileToDiscreteFieldCounted(STRING fileName) := FUNCTION
+  attDS:= SparseARFFfileToDiscreteField(fileName);
+  // Assuming that the last attribute is the dependent class and dependent is complete, the number of independent per instance is COUNT - 1 . 
+  cntDS := PROJECT(TABLE(attDS, {id, cnt:= COUNT(GROUP) -1}, id, MERGE), TRANSFORM(Types.DiscreteField, SELF.number:=0, SELF.value:=LEFT.cnt, SELF:=LEFT));
+  totDS := DISTRIBUTE(cntDS + attDS, HASH32(id));
+  RETURN SORT(totDS, id, number, LOCAL);
 END;
 
 // Creates a file of pivot/target pairs with a Gini impurity value

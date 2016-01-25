@@ -91,7 +91,7 @@ END;
   classifiers
 */
   EXPORT Default := MODULE,VIRTUAL
-    EXPORT Base := 1000; // ID Base - all ids should be higher than this
+    EXPORT Base := ML.Utils.Base; // ID Base - all ids should be higher than this
     // Premise - two models can be combined by concatenating (in terms of ID number) the under-base and over-base parts
     SHARED CombineModels(DATASET(Types.NumericField) sofar,DATASET(Types.NumericField) new) := FUNCTION
       UBaseHigh := MAX(sofar(id<Base),id);
@@ -138,334 +138,100 @@ END;
     END;
   END;
 
+/* From Wikipedia: Naive Bayes classifier. https://en.wikipedia.org/wiki/Naive_Bayes_classifier
+"In machine learning, naive Bayes classifiers are a family of simple probabilistic classifiers based on applying Bayes' theorem with strong (naive) independence assumptions between the features...
+ Naive Bayes classifiers are highly scalable, requiring a number of parameters linear in the number of variables (features/predictors) in a learning problem.
+ Maximum-likelihood training can be done by evaluating a closed-form expression,[1]:718 which takes linear time, rather than by expensive iterative approximation as used for many other types of classifiers...
+ Naive Bayes is a simple technique for constructing classifiers: models that assign class labels to problem instances, represented as vectors of feature values, where the class labels are drawn from some finite set.
+ It is not a single algorithm for training such classifiers, but a family of algorithms based on a common principle: 
+ All naive Bayes classifiers assume that the value of a particular feature is independent of the value of any other feature, given the class variable...
+"
+*/
   EXPORT NaiveBayes(BOOLEAN IgnoreMissing = FALSE) := MODULE(DEFAULT)
-    SHARED SampleCorrection := 1;
-    SHARED LogScale(REAL P) := -LOG(P)/LOG(2);
-
-/* Naive Bayes Classification 
-   This method can support producing classification results for multiple classifiers at once
-   Note the presumption that the result (a weight for each value of each field) can fit in memory at once
+/*  IMPORTANT NOTES:
+    NaiveBayes assumes that the data is complete, that is, all instances must have a value for each attribute in the dataset.
+    IgnoreMissing parameter:
+    - TRUE: NaiveBayes will ignore features with a unique value when learning, resulting in smaller models; it also will ignore feature values of new instances that are not present in the model when classifying.
+    - FALSE, default value: NaiveBayes will apply Laplace smoothing (https://en.wikipedia.org/wiki/Additive_smoothing) when learning or classifying.
 */
-    SHARED BayesResult := RECORD
-      Types.t_RecordId    id := 0;        // A record-id - allows a model to have an ordered sequence of results
-      Types.t_Discrete    class_number;   // Dependent "number" value - Classifier ID
-      Types.t_discrete    c;              // Dependent "value" value - Class value
-      Types.t_FieldNumber number;         // A reference to a feature (or field) in the independants
-      Types.t_Count       Support;        // Number of cases
+    // This function will build a probabilistic model based on two inputs: Independent and Dependent discrete datasets linked by Id value.
+    EXPORT LearnD(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
+      RETURN ML.NaiveBayes.LearnD(Indep, Dep, IgnoreMissing,,);
     END;
-    SHARED BayesResultD := RECORD (BayesResult)
-      Types.t_discrete  f := 0;           // Independant value - Attribute value
-      Types.t_FieldReal PC;                // Either P(F|C) or P(C) if number = 0. Stored in -Log2(P) - so small is good :)
-    END;
-    SHARED BayesResultC := RECORD (BayesResult)
-      Types.t_FieldReal  mu:= 0;          // Independent attribute mean (mu)
-      Types.t_FieldReal  var:= 0;         // Independent attribute sample standard deviation (sigma squared)
-    END;
-/*
-  The inputs to the BuildNaiveBayes are:
-  a) A dataset of discretized independant variables
-  b) A dataset of class results (these must match in ID the discretized independant variables).
-     Some routines can produce multiple classifiers at once; if so these are distinguished using the NUMBER field of cl
-*/
-    EXPORT LearnD(DATASET(Types.DiscreteField) Indep,DATASET(Types.DiscreteField) Dep) := FUNCTION
-      dd := Indep;
-      cl := Dep;
-      Triple := RECORD
-        Types.t_Discrete c;
-        Types.t_Discrete f;
-        Types.t_FieldNumber number;
-        Types.t_FieldNumber class_number;
-      END;
-      Triple form(dd le,cl ri) := TRANSFORM
-        SELF.c := ri.value;
-        SELF.f := le.value;
-        SELF.number := le.number;
-        SELF.class_number := ri.number;
-      END;
-      Vals := JOIN(dd,cl,LEFT.id=RIGHT.id,form(LEFT,RIGHT));
-      AggregatedTriple := RECORD
-        Vals.c;
-        Vals.f;
-        Vals.number;
-        Vals.class_number;
-        Types.t_Count support := COUNT(GROUP);
-      END;
-      // This is the raw table - how many of each value 'f' for each field 'number' appear for each value 'c' of each classifier 'class_number'
-      Cnts := TABLE(Vals,AggregatedTriple,c,f,number,class_number,FEW);
-      // Compute P(C)
-      CTots := TABLE(cl,{value,number,Support := COUNT(GROUP)},value,number,FEW);
-      CLTots := TABLE(CTots,{number,TSupport := SUM(GROUP,Support), GC := COUNT(GROUP)},number,FEW);
-      P_C_Rec := RECORD
-        Types.t_Discrete c;            // The value within the class
-        Types.t_Discrete f;            // The number of features within the class
-        Types.t_Discrete class_number; // Used when multiple classifiers being produced at once
-        Types.t_FieldReal support;     // Used to store total number of C
-        REAL8 w;                       // P(C)
-      END;
-      // Apply Laplace Estimator to P(C) in order to be consistent with attributes' probability
-      P_C_Rec pct(CTots le,CLTots ri) := TRANSFORM
-        SELF.c := le.value;
-        SELF.f := 0; // to be claculated later on
-        SELF.class_number := ri.number;
-        SELF.support := le.Support + SampleCorrection;
-        SELF.w := (le.Support + SampleCorrection) / (ri.TSupport + ri.GC*SampleCorrection);
-      END;
-      PC_0 := JOIN(CTots,CLTots,LEFT.number=RIGHT.number,pct(LEFT,RIGHT),FEW);
-      // Computing Attributes' probability
-      AttribValue_Rec := RECORD
-        Cnts.class_number;  // Used when multiple classifiers being produced at once
-        Cnts.number;        // A reference to a feature (or field) in the independants
-        Cnts.f;             // Independant value
-        Types.t_Count support := 0;
-      END;
-      // Generating feature domain per feature (class_number only used when multiple classifiers being produced at once)
-      AttValues := TABLE(Cnts, AttribValue_Rec, class_number, number, f, FEW);
-      AttCnts   := TABLE(AttValues, {class_number, number, ocurrence:= COUNT(GROUP)},class_number, number, FEW); // Summarize 
-      AttValIgnoreMissing := JOIN(AttValues, AttCnts(ocurrence=1), LEFT.class_number = RIGHT.class_number AND LEFT.number = RIGHT.number,TRANSFORM(LEFT), LEFT ONLY, LOOKUP);
-      AttrValue_per_Class_Rec := RECORD
-        Types.t_Discrete c;
-        AttValues.f;
-        AttValues.number;
-        AttValues.class_number;
-        AttValues.support;
-      END;
-      // Generating class x feature domain, initial support = 0
-      AttrValue_per_Class_Rec form_cl_attr(AttValues le, CTots ri):= TRANSFORM
-        SELF.c:= ri.value;
-        SELF:= le;
-      END;
-      ATots:= JOIN(IF(IgnoreMissing, AttValIgnoreMissing, AttValues), CTots, LEFT.class_number = RIGHT.number, form_cl_attr(LEFT, RIGHT), MANY LOOKUP, FEW);
-      // Counting feature value ocurrence per class x feature, remains 0 if combination not present in dataset
-      ATots form_ACnts(ATots le, Cnts ri) := TRANSFORM
-        SELF.support  := ri.support;
-        SELF      := le;
-      END;
-      ACnts := JOIN(ATots, Cnts, LEFT.c = RIGHT.c AND LEFT.f = RIGHT.f AND LEFT.number = RIGHT.number AND LEFT.class_number = RIGHT.class_number, 
-                            form_ACnts(LEFT,RIGHT),
-                            LEFT OUTER, LOOKUP);
-      // Summarizing and getting value 'GC' to apply in Laplace Estimator
-      TotalFs0 := TABLE(ACnts,{c,number,class_number,Types.t_Count Support := SUM(GROUP,Support),GC := COUNT(GROUP)},c,number,class_number,FEW);
-      TotalFs := TABLE(TotalFs0,{c,class_number,ML.Types.t_Count Support := SUM(GROUP,Support),Types.t_Count GC := SUM(GROUP,GC)},c,class_number,FEW);
-      // Merge and Laplace Estimator
-      F_Given_C_Rec := RECORD
-        ACnts.c;
-        ACnts.f;
-        ACnts.number;
-        ACnts.class_number;
-        ACnts.support;
-        REAL8 w;
-      END;
-      F_Given_C_Rec mp(ACnts le,TotalFs ri) := TRANSFORM
-        SELF.support := le.Support+SampleCorrection;
-        SELF.w := (le.Support+SampleCorrection) / (ri.Support+ri.GC*SampleCorrection);
-        SELF := le;
-      END;
-      // Calculating final probabilties
-      FC := JOIN(ACnts,TotalFs,LEFT.C = RIGHT.C AND LEFT.class_number=RIGHT.class_number,mp(LEFT,RIGHT),LOOKUP);
-      PC_0 form_TotalFs(PC_0 le, TotalFs ri) := TRANSFORM
-        SELF.f  := ri.Support+ri.GC*SampleCorrection;
-        SELF    := le;
-      END;
-      PC := JOIN(PC_0, TotalFs, LEFT.C = RIGHT.C AND LEFT.class_number=RIGHT.class_number,form_TotalFs(LEFT,RIGHT),LOOKUP);   
-      Pret := PROJECT(FC,TRANSFORM(BayesResultD, SELF.PC:=LEFT.w, SELF := LEFT))+PROJECT(PC,TRANSFORM(BayesResultD, SELF.PC:=LEFT.w, SELF.number:= 0,SELF:=LEFT));
-      Pret1 := PROJECT(Pret,TRANSFORM(BayesResultD, SELF.PC := LogScale(LEFT.PC),SELF.id := Base+COUNTER,SELF := LEFT));
-      ToField(Pret1,o);
-      RETURN o;
-    END;
-    // Transform NumericFiled "mod" to discrete Naive Bayes format model "BayesResultD"
+    // This function will transform a NumericFiled "mod" into a discrete Naive Bayes format model "BayesResultD"
     EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
-      ML.FromField(mod,BayesResultD,o);
-      RETURN o;
+      RETURN ML.NaiveBayes.Model(mod);
     END;
-    // This function will take a pre-existing NaiveBayes model (mo) and score every row of a discretized dataset
-    // The output will have a row for every row of dd and a column for every class in the original training set
-    EXPORT ClassProbDistribD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
-      d := Indep;
-      mo := Model(mod);
-      // Firstly we can just compute the support for each class from the bayes result
-      dd := DISTRIBUTE(d,HASH(id)); // One of those rather nice embarassingly parallel activities
-      Inter := RECORD
-        Types.t_discrete c;
-        Types.t_discrete class_number;
-        Types.t_RecordId Id;
-        REAL8  w;
-      END;
-      Inter note(dd le,mo ri) := TRANSFORM
-        SELF.c := ri.c;
-        SELF.class_number := ri.class_number;
-        SELF.id := le.id;
-        SELF.w := ri.PC;
-      END;
-  // RHS is small so ,ALL join should work ok
-  // Ignore the "explicitly distributed" compiler warning - the many lookup is preserving the distribution
-      J := JOIN(dd,mo,LEFT.number=RIGHT.number AND LEFT.value=RIGHT.f,note(LEFT,RIGHT),MANY LOOKUP);
-      InterCounted := RECORD
-        J.c;
-        J.class_number;
-        J.id;
-        REAL8 P := SUM(GROUP,J.W);
-        Types.t_FieldNumber Missing := COUNT(GROUP); // not really missing just yet :)
-      END;
-      TSum := TABLE(J,InterCounted,c,class_number,id,LOCAL);
-  // Now we have the sums for all the F present for each class we need to
-  // a) Add in the P(C)
-  // b) Suitably penalize any 'f' which simply were not present in the model
-  // We start by counting how many not present ...
-      FTots := TABLE(DD,{id,c := COUNT(GROUP)},id,LOCAL);
-      InterCounted NoteMissing(TSum le,FTots ri) := TRANSFORM
-        SELF.Missing := ri.c - le.Missing;
-        SELF := le;
-      END;
-      MissingNoted := JOIN(Tsum,FTots,LEFT.id=RIGHT.id,NoteMissing(LEFT,RIGHT),LOOKUP);
-      InterCounted NoteC(MissingNoted le,mo ri) := TRANSFORM
-        SELF.P := le.P + ri.PC + IF(IgnoreMissing, 0, le.Missing*LogScale(SampleCorrection/ri.f));
-        SELF := le;
-      END;
-      CNoted0 := JOIN(MissingNoted,mo(number=0),LEFT.c=RIGHT.c,NoteC(LEFT,RIGHT),LOOKUP);
-      // dealing with floating precision
-      minP    := TABLE(CNoted0, {class_number, id, pmin:= MIN(GROUP, p)}, class_number, id, LOCAL); // find minimum p per id
-      CNoted  := JOIN(CNoted0, minP, LEFT.class_number = RIGHT.class_number AND LEFT.id = RIGHT.id, 
-                        TRANSFORM(InterCounted, SELF.p:= LEFT.p - RIGHT.pmin, SELF:=LEFT), LOCAL);  // rebasing p before normalizing
-      l_result toResult(CNoted le) := TRANSFORM
-        SELF.id := le.id;               // Instance ID
-        SELF.number := le.class_number; // Classifier ID
-        SELF.value := le.c;             // Class value
-        SELF.conf := POWER(2.0, -le.p); // Convert likehood to decimal value
-      END;
-      // Normalizing Likehood to deliver Class Probability per instance
-      InstResults := PROJECT(CNoted, toResult(LEFT), LOCAL);
-      gInst := TABLE(InstResults, {number, id, tot:=SUM(GROUP,conf)}, number, id, LOCAL);
-      clDist:= JOIN(InstResults, gInst,LEFT.number=RIGHT.number AND LEFT.id=RIGHT.id, TRANSFORM(Types.l_result, SELF.conf:=LEFT.conf/RIGHT.tot, SELF:=LEFT), LOCAL);
-      RETURN clDist;
+    // This function will return the class probabilities of new discrete instances(Indep) based on a pre-existing discrete NaiveBayes model (mo) 
+    // The output will have for each new instance one row with class probability for each class in the model 
+    EXPORT ClassProbDistribD(DATASET(Types.DiscreteField) Indep, DATASET(Types.NumericField) mod) := FUNCTION
+      RETURN ML.NaiveBayes.ClassProbDistribD(Indep, mod, IgnoreMissing,,);
     END;
     // Classification function for discrete independent values and model
     EXPORT ClassifyD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
-      // get class probabilities for each instance
-      dClass:= ClassProbDistribD(Indep, mod);
-      // select the class with greatest probability for each instance
-      sClass := SORT(dClass, id, -conf, LOCAL);
-      finalClass:=DEDUP(sClass, id, LOCAL);
-      RETURN finalClass;
-    END;
+      RETURN ML.NaiveBayes.ClassifyD(Indep, mod, IgnoreMissing,,);
+    END;  
     /*From Wikipedia
     " ...When dealing with continuous data, a typical assumption is that the continuous values associated with each class are distributed according to a Gaussian distribution.
     For example, suppose the training data contain a continuous attribute, x. We first segment the data by the class, and then compute the mean and variance of x in each class.
     Let mu_c be the mean of the values in x associated with class c, and let sigma^2_c be the variance of the values in x associated with class c.
     Then, the probability density of some value given a class, P(x=v|c), can be computed by plugging v into the equation for a Normal distribution parameterized by mu_c and sigma^2_c..."
     */
-    EXPORT LearnC(DATASET(NumericField) Indep, DATASET(DiscreteField) Dep) := FUNCTION
-      Triple := RECORD
-        Types.t_FieldNumber class_number;
-        Types.t_FieldNumber number;
-        Types.t_FieldReal value;
-        Types.t_Discrete c;
-      END;
-      Triple form(Indep le, Dep ri) := TRANSFORM
-        SELF.class_number := ri.number;
-        SELF.number := le.number;
-        SELF.value := le.value;
-        SELF.c := ri.value;
-      END;
-      Vals := JOIN(Indep, Dep, LEFT.id=RIGHT.id, form(LEFT,RIGHT));
-      // Compute P(C)
-      ClassCnts := TABLE(Dep, {number, value, support := COUNT(GROUP)}, number, value, FEW);
-      ClassTots := TABLE(ClassCnts,{number, TSupport := SUM(GROUP,Support)}, number, FEW);
-      P_C_Rec := RECORD
-        Types.t_Discrete class_number; // Used when multiple classifiers being produced at once
-        Types.t_Discrete c;             // The class value "C"
-        Types.t_FieldReal support;          // Cases count
-        Types.t_FieldReal  mu:= 0;          // P(C)
-      END;
-      // Computing prior probability P(C)
-      P_C_Rec pct(ClassCnts le, ClassTots ri) := TRANSFORM
-        SELF.class_number := ri.number;
-        SELF.c := le.value;
-        SELF.support := le.Support;
-        SELF.mu := le.Support/ri.TSupport;
-      END;
-      PC := JOIN(ClassCnts, ClassTots, LEFT.number=RIGHT.number, pct(LEFT,RIGHT), FEW);
-      PC_cnt := COUNT(PC);
-      // Computing Attributes' mean and variance. mu_c and sigma^2_c.
-      AggregatedTriple := RECORD
-        Vals.class_number;
-        Vals.c;
-        Vals.number;
-        Types.t_Count support := COUNT(GROUP);
-        Types.t_FieldReal mu:=AVE(GROUP, Vals.value);
-        Types.t_FieldReal var:= VARIANCE(GROUP, Vals.value);
-      END;
-      AC:= TABLE(Vals, AggregatedTriple, class_number, c, number);
-      Pret := PROJECT(PC, TRANSFORM(BayesResultC, SELF.id := Base + COUNTER, SELF.number := 0, SELF:=LEFT)) +
-              PROJECT(AC, TRANSFORM(BayesResultC, SELF.id := Base + COUNTER + PC_cnt, SELF.var:= LEFT.var*LEFT.support/(LEFT.support -1), SELF := LEFT));
-      ToField(Pret,o);
-      RETURN o;
+    // This function will build a probabilistic model based on two inputs: continuous Independent and discrete Dependent datasets linked by Id value.
+    EXPORT LearnC(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
+      RETURN ML.NaiveBayes.LearnC(Indep, Dep);
     END;
     // Transform NumericFiled "mod" to continuos Naive Bayes format model "BayesResultC"
     EXPORT ModelC(DATASET(Types.NumericField) mod) := FUNCTION
-      ML.FromField(mod,BayesResultC,o);
-      RETURN o;
+      RETURN ML.NaiveBayes.ModelC(mod);
     END;
+    // This function will return the class probabilities of new continuous instances(Indep) based on a pre-existing continuous NaiveBayes model (mo) 
+    // The output will have for each new instance one row with class probability for each class in the model 
     EXPORT ClassProbDistribC(DATASET(Types.NumericField) Indep, DATASET(Types.NumericField) mod) := FUNCTION
-      dd := DISTRIBUTE(Indep, HASH(id));
-      mo := ModelC(mod);
-      Inter := RECORD
-        Types.t_FieldNumber class_number;
-        Types.t_FieldNumber number;
-        Types.t_FieldReal value;
-        Types.t_Discrete c;
-        Types.t_RecordId Id;
-        Types.t_FieldReal  likehood:=0; // Probability density P(x=v|c)
-      END;
-      Inter ProbDensity(dd le, mo ri) := TRANSFORM
-        SELF.id := le.id;
-        SELF.value:= le.value;
-        SELF.likehood := LogScale(exp(-(le.value-ri.mu)*(le.value-ri.mu)/(2*ri.var))/SQRT(2*ML.Utils.Pi*ri.var));
-        SELF:= ri;
-      END;
-      // Likehood or probability density P(x=v|c) is calculated assuming Gaussian distribution of the class based on new instance attribute value and atribute's mean and variance from model
-      LogPall := JOIN(dd,mo,LEFT.number=RIGHT.number , ProbDensity(LEFT,RIGHT),MANY LOOKUP);
-      // Prior probaility PC
-      LogPC:= PROJECT(mo(number=0),TRANSFORM(BayesResultC, SELF.mu:=LogScale(LEFT.mu), SELF:=LEFT));
-      post_rec:= RECORD
-        LogPall.id;
-        LogPall.class_number;
-        LogPall.c;
-        Types.t_FieldReal prod:= SUM(GROUP, LogPall.likehood);
-      END;
-      // Likehood and Prior are expressed in LogScale, summing really means multiply
-      LikehoodProduct:= TABLE(LogPall, post_rec, class_number, c, id, LOCAL);
-      // Posterior probability = prior x likehood_product / evidence
-      // We use only the numerator of that fraction, because the denominator is effectively constant.
-      // See: http://en.wikipedia.org/wiki/Naive_Bayes_classifier#Probabilistic_model
-      l_result toResult(LikehoodProduct le, LogPC ri) := TRANSFORM
-        SELF.id := le.id;               // Instance ID
-        SELF.number := le.class_number; // Classifier ID
-        SELF.value := ri.c;             // Class value
-        SELF.conf:= le.prod + ri.mu;    // Adding mu
-      END;
-      AllPosterior:= JOIN(LikehoodProduct, LogPC, LEFT.class_number = RIGHT.class_number AND LEFT.c = RIGHT.c, toResult(LEFT, RIGHT), LOOKUP);
-      // Normalizing Likehood to deliver Class Probability per instance
-      baseExp:= TABLE(AllPosterior, {id, minConf:= MIN(GROUP, conf)},id, LOCAL); // will use this to divide instance's conf by the smallest per id
-      l_result toNorm(AllPosterior le, baseExp ri) := TRANSFORM
-        SELF.conf:= POWER(2.0, -MIN( le.conf - ri.minConf, 2048));  // minimum probability set to 1/2^2048 = 0 at the end
-        SELF:= le;
-      END;
-      AllOffset:= JOIN(AllPosterior, baseExp, LEFT.id = RIGHT.id, toNorm(LEFT, RIGHT), LOOKUP); // at least one record per id with 1.0 probability before normalization
-      gInst := TABLE(AllOffset, {number, id, tot:=SUM(GROUP,conf)}, number, id, LOCAL);
-      clDist:= JOIN(AllOffset, gInst,LEFT.number=RIGHT.number AND LEFT.id=RIGHT.id, TRANSFORM(Types.l_result, SELF.conf:=LEFT.conf/RIGHT.tot, SELF:=LEFT), LOCAL);
-      RETURN clDist;
+      RETURN ML.NaiveBayes.ClassProbDistribC(Indep, mod);
     END;
     // Classification function for continuous independent values and model
     EXPORT ClassifyC(DATASET(Types.NumericField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
-      // get class probabilities for each instance
-      dClass:= ClassProbDistribC(Indep, mod);
-      // select the class with greatest probability for each instance
-      sClass := SORT(dClass, id, -conf, LOCAL);
-      finalClass:=DEDUP(sClass, id, LOCAL);
-      RETURN finalClass;
-     END;
+      RETURN ML.NaiveBayes.ClassifyC(Indep, mod);
+    END;
   END; // NaiveBayes Module
+  
+  EXPORT SparseNaiveBayes(BOOLEAN IgnoreMissing = FALSE, Types.t_discrete defValue = 0) := MODULE(DEFAULT)
+/*  IMPORTANT NOTES:
+    This MODULE was created to deal with Sparse DATASETS where all "instance-attribute-value = defValue" were explicitly removed, as imported from Sparse ARFF files.
+    Example for default value = 0:
+    //ARFF file               | //Sparse ARFF file       | //Sparse Types.DiscreteField DS
+                              | attr index starts in 0   | attr index starts in 1
+    @data                     | @data                    | //defValue:= 0, posclass:=1 , negclass:= 0
+    0, 0, 1, 0, 0, posclass   | {2 1, 5 posclass}        | [{1, 3, 1}, {1, 6, 1},
+    2, 0, 0, 0, 1, posclass   | {0 2, 4 1, 5 posclass}   |  {2, 1, 2}, {2, 5, 1}, {2, 6, 1},
+    0, 0, 0, 0, 2, negclass   | {4 2, 5 negclass}        |  {3, 5, 2}, {3, 6, 0}]
 
+    Highly sparse data can be represented with very few records, which saves disk space and accelerates calculations (based on pre computations on DefValue)
+    SparseNaiveBayes assumes any independent missing equal to the defValue, for any other value the independent data must be complete. Dependent data must be complete.
+    All independent records having value = defValue MUST be filtered out.
+    There MUST be one additional record per instances having all their "value" fields = defValue: {id, number:= 0 and value:= 0} when calculating ClassProbDistribD or ClassifyD. 
+    IgnoreMissing parameter:
+    - TRUE: NaiveBayes will ignore features with a unique value when learning, resulting in smaller models; it also will ignore feature values of new instances that are not present in the model when classifying.
+    - FALSE, default value: NaiveBayes will apply Laplace smoothing (https://en.wikipedia.org/wiki/Additive_smoothing) when learning or classifying.
+*/
+    SHARED SparseData:= TRUE;
+    EXPORT LearnD(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
+      RETURN ML.NaiveBayes.LearnD(Indep, Dep, IgnoreMissing, SparseData, defValue);
+    END;
+    // Transform NumericFiled "mod" to continuos Naive Bayes format model "BayesResultD"
+    EXPORT ModelD(DATASET(Types.NumericField) mod) := FUNCTION
+      RETURN ML.NaiveBayes.Model(mod);
+    END;
+    // This function will take a pre-existing NaiveBayes model (mo) and score new instances in Sparse Mode 
+    EXPORT ClassProbDistribD(DATASET(Types.DiscreteField) Indep, DATASET(Types.NumericField) mod) := FUNCTION
+      RETURN ML.NaiveBayes.ClassProbDistribD(Indep, mod, IgnoreMissing, SparseData, defValue);
+    END;
+    // Classification function for continuous independent values and model
+    EXPORT ClassifyD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
+      RETURN ML.NaiveBayes.ClassifyD(Indep, mod, IgnoreMissing, SparseData, defValue);
+    END;  
+  END; // SparseNaiveBayes Module
 /*
   See: http://en.wikipedia.org/wiki/Perceptron
   The inputs to the BuildPerceptron are:
@@ -1590,7 +1356,7 @@ Configuration Input
     t_FieldReal   AUC:=0;
   END;
   EXPORT AUC_ROC(DATASET(l_result) classProbDist, Types.t_Discrete positiveClass, DATASET(Types.DiscreteField) allDep) := FUNCTION
-    SHARED cntREC:= RECORD
+    cntREC:= RECORD
       t_FieldNumber classifier;  // The classifier in question (value of &amp;apos;number&amp;apos; on outcome data)
       t_Discrete  c_actual;      // The value of c provided
       t_FieldReal score :=-1;
@@ -1601,7 +1367,7 @@ Configuration Input
       t_count     totPos:= 0;
       t_count     totNeg:= 0;      
     END;
-    SHARED compREC:= RECORD(cntREC)
+    compREC:= RECORD(cntREC)
       t_Discrete  c_modeled;
     END;
     classOfInterest := classProbDist(value = positiveClass);

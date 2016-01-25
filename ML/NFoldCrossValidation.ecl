@@ -2,6 +2,7 @@
 IMPORT * FROM ML.Types;
 EXPORT NFoldCrossValidation(IndepDS, DepDS, LearnerName, NumFolds) := FUNCTIONMACRO
   learner:= LearnerName;
+  LOADXML('<xml/>');
   #DECLARE(fields);
   #DECLARE(ilearn) #SET(ilearn,'')
   #DECLARE(icpd)   #SET(icpd,'')
