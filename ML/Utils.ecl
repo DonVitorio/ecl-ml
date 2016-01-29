@@ -1,6 +1,7 @@
 ﻿// Utilities for the implementation of ML (rather than the interface to it)
 IMPORT * FROM $;
 IMPORT Std.Str;
+IMPORT Std.system.Thorlib;
 EXPORT Utils := MODULE
 
 EXPORT Pi := 3.1415926535897932384626433;
@@ -300,7 +301,7 @@ END;
 // Based on Richard Taylor's SparseARFF.ConvertFlatFile and John Holt's suggestions
 EXPORT SparseARFFfileToDiscreteField(STRING fileName) := FUNCTION
   InDS    := DATASET(fileName, {STRING Line}, CSV(SEPARATOR([])));
-  ParseDS := PROJECT(InDS, TRANSFORM({UNSIGNED RecID, STRING Line}, SELF.RecID:= COUNTER, SELF := LEFT));
+  ParseDS := PROJECT(InDS, TRANSFORM({UNSIGNED RecID, STRING Line}, SELF.RecID:= ((COUNTER-1)* Thorlib.nodes())+ Thorlib.node() + 1, SELF := LEFT), LOCAL);
   //Parse the fields and values out
   PATTERN ws       := ' ';
   PATTERN RecStart := '{';

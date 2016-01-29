@@ -1,6 +1,8 @@
 ﻿IMPORT * FROM ML;
 // The train dataset has 80,000 instances x 109,735 attributes + 1 class attribute.
 // The dataset is represented using Weka Sparse ARFF format, we assume default value as "0"
+// You can download the ARFF file from:
+// https://www.dropbox.com/s/3ss8ibhi9ftvvn5/sparsearfffile.arff?dl=0
 TrainDS   := ML.Utils.SparseARFFfileToDiscreteFieldCounted('~vherrara::datasets::sparsearfffile.arff');
 indepData := TrainDS(Number<109736);
 depData   := TrainDS(Number=109736);
