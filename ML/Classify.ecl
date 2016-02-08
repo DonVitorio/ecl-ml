@@ -1239,6 +1239,24 @@ The model  is used to predict the class from new examples.
         RETURN ML.Trees.ModelD(mod);
       END;
     END;  // Gini Impurity DT Module
+    EXPORT GiniImpurityBasedSparse(INTEGER1 Depth=10, REAL Purity=1.0, Types.t_discrete defValue = 0):= MODULE(DEFAULT)
+      EXPORT LearnD(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
+        nodes := ML.Trees.SplitsGiniImpurBasedSparse(Indep, Dep, Depth, Purity, defValue);
+        RETURN ML.Trees.ToDiscreteTree(nodes);
+      END;
+      EXPORT ClassProbDistribD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) :=FUNCTION
+        RETURN ML.Trees.ClassProbDistribD(Indep, mod);
+      END;
+      EXPORT ClassifyD(DATASET(Types.DiscreteField) Indep,DATASET(Types.NumericField) mod) := FUNCTION
+        RETURN ML.Trees.ClassifyD(Indep,mod);
+      END;
+      EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
+        RETURN ML.Trees.ModelD(mod);
+      END;
+    END;  // Gini Impurity DT Module
+    
+    
+    
 /*
     Decision Tree using C4.5 Algorithm (Quinlan, 1987)
 */
