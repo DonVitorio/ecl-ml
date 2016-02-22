@@ -27,6 +27,10 @@ OUTPUT(D_results, NAMED('DiscClassifResults'), ALL);
 OUTPUT(SORT(D_compare.CrossAssignments, c_actual, c_modeled), NAMED('DiscCrossAssig'), ALL); // Confusion Matrix
 OUTPUT(AUC_D0, ALL, NAMED('AUC_D0'));
 OUTPUT(AUC_D1, ALL, NAMED('AUC_D1'));
+OUTPUT(D_compare.RecallByClass, NAMED('RecallByClassD'));
+OUTPUT(D_compare.PrecisionByClass, NAMED('PrecByClassD'));
+OUTPUT(SORT(D_compare.FP_Rate_ByClass, classifier, c_modeled), NAMED('FPR_ByClassD'));
+OUTPUT(D_compare.Accuracy, NAMED('AccurD'));
 
 // Lymphoma Dataset - Continuous dataset 96 instances x 4026 attributes + class
 lymphomaData:= lymphomaDS.DS;
@@ -52,3 +56,7 @@ OUTPUT(C_results, NAMED('ContClassifResults'), ALL);
 OUTPUT(SORT(C_compare.CrossAssignments, c_actual, c_modeled), NAMED('ContCrossAssig'), ALL); // Confusion Matrix
 OUTPUT(AUC_C0, ALL, NAMED('AUC_C0'));
 OUTPUT(AUC_C1, ALL, NAMED('AUC_C1'));
+OUTPUT(C_compare.RecallByClass, NAMED('RecallByClassC'));
+OUTPUT(C_compare.PrecisionByClass, NAMED('PrecByClassC'));
+OUTPUT(SORT(C_compare.FP_Rate_ByClass, classifier, c_modeled), NAMED('FPR_ByClassC'));
+OUTPUT(C_compare.Accuracy, NAMED('AccurC'));
