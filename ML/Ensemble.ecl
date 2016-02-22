@@ -207,30 +207,40 @@ EXPORT Ensemble := MODULE
       // Filtering pure nodes
       PureNodes := top_info(info = 0); // Pure Nodes have Info Entropy = 0
       // Node-instances in pure nodes pass through
-      pass_thru := JOIN(top_dep, PureNodes, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id, TRANSFORM(gNodeInstDisc,
+      pure_thru := JOIN(top_dep, PureNodes, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id, TRANSFORM(gNodeInstDisc,
                        SELF.level:= p_level, SELF.depend:=LEFT.depend, SELF.support:=LEFT.cnt, SELF.id:=0, SELF.number:=0, SELF.value:=0, SELF:=LEFT), LOCAL);
       // New working set after removing pass through node-instances
       nodes_toSplit := DISTRIBUTE(JOIN(dnodes, PureNodes, LEFT.node_id=RIGHT.node_id, TRANSFORM(LEFT), LEFT ONLY, LOCAL), HASH32(id));
       // Gather only the data needed for each LOOP iteration,
       // featSetInst preserves dgrLstNew distribution, then it can be JOINed LOCALly with all_Data (HASH32(id) distribution also)
+
+
       featSet   := NxKoutofM(treeNum, fsNum, totFeat);  // generating list of features selected for each tree
       ftSetInst := JOIN(dgrLstNew, featSet, LEFT.gNum = RIGHT.gNum, MANY LOOKUP);
       loop_Data := JOIN(all_Data, ftSetInst, LEFT.id = RIGHT.id AND LEFT.number = RIGHT.number, TRANSFORM(LEFT), LOCAL);
       // Populating nodes' attributes to split
       toSplit   := JOIN(loop_Data, nodes_toSplit, LEFT.id = RIGHT.id, TRANSFORM(gNodeInstDisc, SELF.number:= LEFT.number; SELF.value:= LEFT.value; SELF:= RIGHT;), LOCAL);
       this_set  := DISTRIBUTE(toSplit, HASH32(group_id, node_id));
-      // Calculating Information Gain of possible splits
-      child       := TABLE(this_set, {group_id, node_id, number, value, depend, cnt := COUNT(GROUP)}, group_id, node_id, number, value, depend, LOCAL);
-      child_tot := TABLE(child,    {group_id, node_id, number, value, tot := SUM(GROUP, cnt)},      group_id, node_id, number, value, LOCAL);
+      // Identifying Non Splittable Nodes, nodes with all attributes selected having one value,
+      child0     := TABLE(this_set,   {group_id, node_id, number, value, depend, cnt := COUNT(GROUP)}, group_id, node_id, number, value, depend, LOCAL);
+      child0_tot := TABLE(child0,     {group_id, node_id, number, value, tot := SUM(GROUP, cnt)},      group_id, node_id, number, value, LOCAL);
+      c_num_val  := TABLE(child0_tot, {group_id, node_id, number, cnt := COUNT(GROUP)},                group_id, node_id, number, LOCAL);  // values per node-attribs
+      c_all_one  := TABLE(c_num_val(cnt=1), {group_id, node_id, onevalfeat_cnt := COUNT(GROUP)},       group_id, node_id, LOCAL);          // count one-value attribs
+      cant_spl   := c_all_one(onevalfeat_cnt = fsNum);  // nodes with all attributes selected having one value
+      noSp_thru  := JOIN(top_dep, cant_spl,    LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id, TRANSFORM(gNodeInstDisc,
+                        SELF.level:= p_level, SELF.depend:=LEFT.depend, SELF.support:=LEFT.cnt, SELF.id:=0, SELF.number:=0, SELF.value:=0, SELF:=LEFT), LOCAL);
+      // New working aggregated node-instances calcs after removing Non Splittable ones
+      child      := JOIN(child0,     cant_spl, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id, TRANSFORM(LEFT), LEFT ONLY, LOCAL);
+      child_tot  := JOIN(child0_tot, cant_spl, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id, TRANSFORM(LEFT), LEFT ONLY, LOCAL);  
       csp := RECORD
         child_tot;
         REAL4 prop;
         REAL4 plogp;
       END;
       // Calculating Intrinsic Information Entropy of each attribute(split) per node
-      csplit_p  := JOIN(child_tot, top_dep_tot, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id,
-                    TRANSFORM(csp, SELF.prop:= LEFT.tot/RIGHT.tot, SELF.plogp:= P_LOG_P(LEFT.tot/RIGHT.tot), SELF:=LEFT), LOCAL);
-      csplit    := TABLE(csplit_p, {group_id, node_id, number, split_info:=SUM(GROUP, plogp)}, group_id, node_id, number, LOCAL); // Intrinsic Info
+      csplit_p   := JOIN(child_tot, top_dep_tot, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id,
+                        TRANSFORM(csp, SELF.prop:= LEFT.tot/RIGHT.tot, SELF.plogp:= P_LOG_P(LEFT.tot/RIGHT.tot), SELF:=LEFT), LOCAL);
+      csplit     := TABLE(csplit_p, {group_id, node_id, number, split_info:=SUM(GROUP, plogp)}, group_id, node_id, number, LOCAL); // Intrinsic Info
       chp := RECORD
         child;
         REAL4 prop; // Proportion pertaining to this dependant value
@@ -271,7 +281,7 @@ EXPORT Ensemble := MODULE
       // reasigning instances to new nodes
       node_inst := JOIN(this_set, new_split, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.depend,
                       TRANSFORM(gNodeInstDisc, SELF.node_id:=RIGHT.value, SELF.level:= RIGHT.level +1, SELF.value:= LEFT.depend, SELF:= LEFT ), LOCAL);
-      RETURN pass_thru + new_split + node_inst;   // returning leaf nodes, new splits nodes and reassigned instances
+      RETURN pure_thru + noSp_thru + new_split + node_inst;   // returning leaf nodes, new splits nodes and reassigned instances
     END;
     // generating best feature_selection-gini_impurity splits, loopfilter level = COUNTER let pass only the nodes to be splitted for any current level
     res := LOOP(depG, LEFT.level=COUNTER, COUNTER < depth , RndFeatSelPartitionGRBased(ROWS(LEFT), COUNTER));
@@ -358,6 +368,19 @@ EXPORT Ensemble := MODULE
     sClass := JOIN(accCDS, tClass, LEFT.id=RIGHT.id, LOCAL);
     RETURN PROJECT(sClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/LEFT.tot, SELF.number:= 1, SELF:= LEFT), LOCAL);
   END;
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  EXPORT ClassProbDistribForestDNodes(DATASET(DiscreteField) Indep, DATASET(gSplitD) nodes) := FUNCTION
+    dataSplitted:= gSplitInstancesD(nodes, Indep);
+    dDS    := DISTRIBUTE(dataSplitted, HASH32(id));
+    accDS  := TABLE(dDS, {id, group_id, value, sumWeight:= SUM(GROUP, weight)}, id, group_id, value, LOCAL);
+    sortDS := SORT(accDS, id, group_id, value, -sumWeight, LOCAL);
+    ddupDS := DEDUP(sortDS, id, group_id, LOCAL);
+    accCDS := TABLE(ddupDS, {id, value, cnt:= COUNT(GROUP)}, id, value, LOCAL);
+    tClass := TABLE(accCDS, {id, tot:= SUM(GROUP, cnt)}, id, LOCAL);
+    sClass := JOIN(accCDS, tClass, LEFT.id=RIGHT.id, LOCAL);
+    RETURN PROJECT(sClass, TRANSFORM(l_result, SELF.conf:= LEFT.cnt/LEFT.tot, SELF.number:= 1, SELF:= LEFT), LOCAL);
+  END;
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Classification function for discrete independent values and model
   EXPORT ClassifyDForest(DATASET(DiscreteField) Indep,DATASET(NumericField) mod) := FUNCTION
     // get class probabilities for each instance

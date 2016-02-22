@@ -55,11 +55,12 @@ EXPORT NaiveBayes := MODULE
   SHARED AggTripleD SparseValsCount(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep, DATASET(clCnt_Rec) CTotals, Types.t_discrete defValue = 0):= FUNCTION
     Vals := JOIN(Indep,Dep,LEFT.id=RIGHT.id,form(LEFT,RIGHT));
     // This is the raw table - how many of each value 'f' for each field 'number' appear for each value 'c' of each classifier 'class_number'
-    Cnts0 := TABLE(Vals,{c,f,number,class_number,support:=COUNT(GROUP)}, class_number,number,c,f, MERGE);
+    Cnts00 := TABLE(Vals,{c,f,number,class_number,support:=COUNT(GROUP)}, class_number,number,c,f, MERGE);
+    Cnts0  := TABLE(Cnts00, {c,number,class_number, tsupport:=SUM(GROUP, support)}, class_number,number,c, MERGE);
     NonEmptyAtt:= TABLE(Cnts0, {number,class_number},number,class_number);
     DefCnts := JOIN(NonEmptyAtt, CTotals, LEFT.class_number=RIGHT.number, TRANSFORM(AggTripleD, SELF.f:=defValue, SELF.support:= RIGHT.support, SELF.c:= RIGHT.value, SELF:= LEFT));
-    SpareCnts:= JOIN(DefCnts, Cnts0, LEFT.class_number=RIGHT.class_number AND LEFT.number=RIGHT.number AND LEFT.c=RIGHT.c, TRANSFORM(AggTripleD, SELF.support:= LEFT.support - RIGHT.support , SELF:= LEFT), LEFT OUTER);
-    RETURN PROJECT(Cnts0, AggTripleD) +  SpareCnts;
+    SpareCnts:= JOIN(DefCnts, Cnts0, LEFT.class_number=RIGHT.class_number AND LEFT.number=RIGHT.number AND LEFT.c=RIGHT.c, TRANSFORM(AggTripleD, SELF.support:= LEFT.support - RIGHT.tsupport , SELF:= LEFT), LEFT OUTER);
+    RETURN PROJECT(Cnts00, AggTripleD) +  SpareCnts(support>0);
   END;
 /*
   LearnD is used in both simple NaiveBayes and SparseNaiveBayes classifiers.

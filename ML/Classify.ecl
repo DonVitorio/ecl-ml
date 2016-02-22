@@ -1321,6 +1321,13 @@ Configuration Input
                              Ensemble.SplitFeatureSampleIGR(Indep, Dep, treeNum, fsNum, Depth));
       RETURN ML.Ensemble.ToDiscreteForest(nodes);
     END;
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    EXPORT LearnDNodes(DATASET(Types.DiscreteField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
+      nodes := IF(GiniSplit, Ensemble.SplitFeatureSampleGI(Indep, Dep, treeNum, fsNum, Purity, Depth), 
+                             Ensemble.SplitFeatureSampleIGR(Indep, Dep, treeNum, fsNum, Depth));
+      RETURN nodes;
+    END;
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     EXPORT LearnC(DATASET(Types.NumericField) Indep, DATASET(Types.DiscreteField) Dep) := FUNCTION
       nodes := Ensemble.SplitFeatureSampleGIBin(Indep, Dep, treeNum, fsNum, Purity, Depth);
       RETURN ML.Ensemble.ToContinuosForest(nodes);
@@ -1338,6 +1345,11 @@ Configuration Input
     EXPORT ClassProbDistribD(DATASET(Types.DiscreteField) Indep, DATASET(Types.NumericField) mod) :=FUNCTION
       RETURN ML.Ensemble.ClassProbDistribForestD(Indep, mod);
     END;
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    EXPORT ClassProbDistribDNodes(DATASET(Types.DiscreteField) Indep, DATASET(ML.Ensemble.gSplitD) nodes) :=FUNCTION
+      RETURN ML.Ensemble.ClassProbDistribForestDNodes(Indep, nodes);
+    END;
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     EXPORT ClassProbDistribC(DATASET(Types.NumericField) Indep,DATASET(Types.NumericField) mod) :=FUNCTION
       RETURN ML.Ensemble.ClassProbDistribForestC(Indep, mod);
     END;
