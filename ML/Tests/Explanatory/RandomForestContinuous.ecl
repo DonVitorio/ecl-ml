@@ -168,7 +168,7 @@ ML.ToField(iris_Data, full_ds);
 indepData:= full_ds(number<5);
 depData:= PROJECT(full_ds(number=5),TRANSFORM(Types.DiscreteField, SELF.number:=1, SELF:=LEFT));
 
-learner := Classify.RandomForest(25, 3, 1.0, 5);
+learner := Classify.RandomForest(25, 2, 1.0, 3);
 result := learner.learnc(IndepData, DepData); // model to use when classifying
 OUTPUT(result,NAMED('learnc_output'), ALL); // group_id represent number of tree
 model:= learner.modelC(result);  // transforming model to a easier way to read it

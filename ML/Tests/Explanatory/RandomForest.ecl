@@ -56,7 +56,7 @@ OUTPUT(depData, NAMED('depData'), ALL);
 
 // Generating a random forest of 100 trees selecting 7 features for splits using impurity:=1.0 and max depth:= 100. 
 //learner := Classify.RandomForest(100, 7, 1.0, 100);         // GiniSplit = TRUE (default) uses Gini Impurity as split criteria
-learner := Classify.RandomForest(100, 7, 1.0, 100, FALSE);  // GiniSplit = FALSE uses Info Gain Ratio as split criteria
+learner := Classify.RandomForest(51, 5, 1.0, 35, TRUE);  // GiniSplit = FALSE uses Info Gain Ratio as split criteria
 result := learner.LearnD(IndepData, DepData); // model to use when classifying
 // OUTPUT(result,NAMED('learnd_output'), ALL); // group_id represent number of tree
 model:= learner.model(result);  // transforming model to a easier way to read it
@@ -66,14 +66,21 @@ OUTPUT(SORT(model, group_id, node_id, value), NAMED('model_ouput') );
 // To review the whole model use following line instead:
 //OUTPUT(SORT(model, group_id, node_id, value),, '~user::rdnforest_model', OVERWRITE); // stored in cluster
 
+indep_tdata:= TABLE(TE.AdultDS.Test_Data,{id, Age, WorkClass, education, education_num, marital_status, occupation, relationship, race, sex, capital_gain, capital_loss, hours_per_week, native_country});
+dep_tdata:= TABLE(TE.AdultDS.Test_Data,{id, Outcome});
+
+ToField(indep_tdata, pr_tindep);
+indeptData := ML.Discretize.ByRounding(pr_tindep);
+ToField(dep_tdata, pr_tdep);
+deptData := ML.Discretize.ByRounding(pr_tdep);
 //Class distribution for each Instance
-ClassDist:= learner.ClassProbDistribD(IndepData, result);
+ClassDist:= learner.ClassProbDistribD(indeptData, result);
 OUTPUT(ClassDist, NAMED('ClassDist'), ALL);
-class:= learner.classifyD(IndepData, result); // classifying
+class:= learner.classifyD(indeptData, result); // classifying
 OUTPUT(class, NAMED('class_result'), ALL); // conf show voting percentage
 
 //Measuring Performance of Classifier
-performance:= Classify.Compare(depData, class);
+performance:= Classify.Compare(deptData, class);
 OUTPUT(performance.CrossAssignments, NAMED('CrossAssig'));
 OUTPUT(performance.RecallByClass, NAMED('RecallByClass'));
 OUTPUT(performance.PrecisionByClass, NAMED('PrecisionByClass'));
