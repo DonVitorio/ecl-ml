@@ -28,14 +28,26 @@ EXPORT Sampling := MODULE
 	SHARED GenerateIdList(Types.t_Count origSize, Types.t_Discrete pctSize = 100, Types.t_RecordID baseId = 0) := FUNCTION
 		RETURN PROJECT(Vec.From(origSize * pctSize DIV 100),TRANSFORM(idListRec, SELF.id:=LEFT.x + baseId, SELF.oldid := RANDOM()%origSize + 1));
 	END;
-	SHARED dsRecordRnd := RECORD(Types.NumericField)
+	SHARED dsNumRecordRnd := RECORD(Types.NumericField)
 		Types.t_FieldNumber rnd:= 0;	
 	END;
-	SHARED dsRecordRnd AddRandom(Types.NumericField l) :=TRANSFORM
+	SHARED dsNumRecordRnd AddNumRandom(Types.NumericField l) :=TRANSFORM
 		SELF.rnd := RANDOM();
 		SELF := l;
 	END;
-	SHARED Types.NumericField GetRecords(Types.NumericField l, idListRec r) := TRANSFORM
+	SHARED dsDisRecordRnd := RECORD(Types.DiscreteField)
+		Types.t_FieldNumber rnd:= 0;	
+	END;
+	SHARED dsDisRecordRnd AddDisRandom(Types.DiscreteField l) :=TRANSFORM
+		SELF.rnd := RANDOM();
+		SELF := l;
+	END;
+	SHARED Types.NumericField GetNumRecords(Types.NumericField l, idListRec r) := TRANSFORM
+		SELF.id := r.id;
+		SELF.number := l.number;
+		SELF.value := l.value;
+	END;
+	SHARED Types.DiscreteField GetDisRecords(Types.DiscreteField l, idListRec r) := TRANSFORM
 		SELF.id := r.id;
 		SELF.number := l.number;
 		SELF.value := l.value;
@@ -74,7 +86,7 @@ EXPORT Sampling := MODULE
 	EXPORT GeneratedData(DATASET(idListRec) dsIdList, DATASET( Types.NumericField) origData) := MODULE
 		EXPORT genIdList:= dsIdList;
 		EXPORT origDataset := origData;
-		jList := JOIN(origData, dsIdList, LEFT.id = RIGHT.oldId, GetRecords(LEFT, RIGHT), LOOKUP, MANY);
+		jList := JOIN(origData, dsIdList, LEFT.id = RIGHT.oldId, GetNumRecords(LEFT, RIGHT), LOOKUP, MANY);
 		EXPORT genSubSample:= SORT(jList, id, number);
 	END;
 	
@@ -89,14 +101,75 @@ EXPORT Sampling := MODULE
 		numIdx 	:= MIN(originalData, number);
 		dsIds 	:= originalData(number = numIdx);
 		origSize := COUNT(dsIds);
-		dRnd := PROJECT(dsIds, AddRandom(LEFT));
+		dRnd := PROJECT(dsIds, AddNumRandom(LEFT));
 		dRndSorted := SORT(dRnd, rnd);
-		sampleSize := MIN(100, ROUND(origSize*pctSize/100));
+		sampleSize := MIN(origSize, ROUND(origSize*pctSize/100));
 		ds_raw := CHOOSEN(dRndSorted, sampleSize);
 		ds_ids := PROJECT(ds_raw, TRANSFORM(idListRec, SELF.id := baseId + COUNTER, SELF.oldId := LEFT.id));
 		RETURN GeneratedData(ds_ids, originalData);
 	END;
-	
+  
+	EXPORT RndSampleSplitNum (DATASET(Types.NumericField) origData, Types.t_Discrete pctSplit = 100) := MODULE
+		numIdx 	          := MIN(origData, number);
+		dsIds        	    := origData(number = numIdx);
+		dRnd              := PROJECT(dsIds, AddNumRandom(LEFT));
+		SHARED dRndSorted := SORT(dRnd, rnd);
+		origSize          := COUNT(dRndSorted);
+		SHARED sampleSize := MIN(origSize, ROUND(origSize*pctSplit/100));
+    // Left Split
+		EXPORT LeftSplitBaseId  (Types.t_RecordID leftBaseId = 0)  := FUNCTION
+      leftStarPos := 1;
+      left_raw      := CHOOSEN(dRndSorted, sampleSize, leftStarPos);
+      left_ids      := PROJECT(left_raw , TRANSFORM(idListRec, SELF.id := leftBaseId  + COUNTER, SELF.oldId := LEFT.id));
+      RETURN JOIN(origData, left_ids, LEFT.id = RIGHT.oldId, GetNumRecords(LEFT, RIGHT), LOOKUP, MANY);
+    END;
+    EXPORT LeftSplit := LeftSplitBaseId(0);
+    // Right Split
+		EXPORT RightSplitBaseId (Types.t_RecordID rightBaseId = 0) := FUNCTION
+      rightStarPos := sampleSize + 1;
+      right_raw     := CHOOSEN(dRndSorted, ALL       , rightStarPos);
+      right_ids     := PROJECT(right_raw, TRANSFORM(idListRec, SELF.id := rightBaseId + COUNTER, SELF.oldId := LEFT.id));
+      RETURN JOIN(origData, right_ids, LEFT.id = RIGHT.oldId, GetNumRecords(LEFT, RIGHT), LOOKUP, MANY);
+    END;
+    EXPORT RightSplit := RightSplitBaseId(0);
+	END;
+
+	EXPORT RndSampleSplitDis (DATASET(Types.DiscreteField) origData, Types.t_Discrete pctSplit = 100) := MODULE
+		numIdx 	          := MIN(origData, number);
+		dsIds        	    := origData(number = numIdx);
+		dRnd              := PROJECT(dsIds, AddDisRandom(LEFT));
+		SHARED dRndSorted := SORT(dRnd, rnd);
+		origSize          := COUNT(dRndSorted);
+		SHARED sampleSize := MIN(origSize, ROUND(origSize*pctSplit/100));
+    // Left Split
+		EXPORT LeftSplitBaseId  (Types.t_RecordID leftBaseId = 0)  := FUNCTION
+      leftStarPos := 1;
+      left_raw      := CHOOSEN(dRndSorted, sampleSize, leftStarPos);
+      left_ids      := PROJECT(left_raw , TRANSFORM(idListRec, SELF.id := leftBaseId  + COUNTER, SELF.oldId := LEFT.id));
+      RETURN JOIN(origData, left_ids, LEFT.id = RIGHT.oldId, GetDisRecords(LEFT, RIGHT), LOOKUP, MANY);
+    END;
+    EXPORT LeftSplit := LeftSplitBaseId(0);
+    // Right Split
+		EXPORT RightSplitBaseId (Types.t_RecordID rightBaseId = 0) := FUNCTION
+      rightStarPos := sampleSize + 1;
+      right_raw     := CHOOSEN(dRndSorted, ALL       , rightStarPos);
+      right_ids     := PROJECT(right_raw, TRANSFORM(idListRec, SELF.id := rightBaseId + COUNTER, SELF.oldId := LEFT.id));
+      RETURN JOIN(origData, right_ids, LEFT.id = RIGHT.oldId, GetDisRecords(LEFT, RIGHT), LOOKUP, MANY);
+    END;
+    EXPORT RightSplit := RightSplitBaseId(0);
+	END;
+  
+  EXPORT NFoldDiscrete(DATASET(Types.DiscreteField) originalData, Types.t_Discrete num_part) := MODULE
+    distribIdx 	:= max(originalData, number);
+    dRnd := PROJECT(originalData(number = distribIdx), AddDisRandom(LEFT));
+    dRndSorted := SORT(dRnd,rnd);
+    SHARED ds_parts := PROJECT(dRndSorted, TRANSFORM(idFoldRec, SELF.Fold := COUNTER%num_part + 1, SELF:= LEFT));
+    EXPORT NFoldList:= SORT(ds_parts, id);
+    EXPORT FoldNDS(Types.t_Discrete num_fold, Types.t_RecordID baseId = 0) := FUNCTION
+      ds_ids := ds_parts(fold = num_fold);
+      RETURN JOIN(originalData, ds_ids,LEFT.id = RIGHT.id, TRANSFORM(Types.DiscreteField, SELF.id:= LEFT.id + baseId, SELF:=LEFT), LOOKUP);		
+    END;
+  END;
 // 	Returns a random sample with replacement from the original dataset.
 //	The instances are picked randomly one by one with replacement (an instance can be picked more than once)
 //	until until the desired size is reached. It is possible to return datasets larger than original.
@@ -164,7 +237,7 @@ EXPORT Sampling := MODULE
 //
 	EXPORT NFold(DATASET(Types.NumericField) originalData, Types.t_Discrete num_part, Types.t_FieldNumber fieldDistrib = 0) := MODULE
 		distribIdx 	:= if(fieldDistrib = 0, max(originalData, number), fieldDistrib);
-		dRnd := PROJECT(originalData(number = distribIdx), AddRandom(LEFT));	
+		dRnd := PROJECT(originalData(number = distribIdx), AddNumRandom(LEFT));	
 		dRndSorted := SORT(dRnd,value,rnd);
 		SHARED ds_parts := PROJECT(dRndSorted, TRANSFORM(idFoldRec, SELF.Fold := COUNTER%num_part + 1, SELF:= LEFT));
 		EXPORT NFoldList:= SORT(ds_parts, id);

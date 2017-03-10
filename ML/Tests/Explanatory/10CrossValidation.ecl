@@ -9,7 +9,7 @@ ML.ToField(indep_data, pr_indep);
 indepData := ML.Discretize.ByRounding(pr_indep);
 ML.ToField(dep_data, pr_dep);
 depData := ML.Discretize.ByRounding(pr_dep);
-learner := ML.Classify.RandomForest(100, 8, 1.0, 125, TRUE);
+learner := ML.Classify.RandomForest(100, 5, 1.0, 35, FALSE);
 
 cv:= ML.NFoldCrossValidation(indepData, depData, learner, 10);
 OUTPUT(cv.CrossAssignments, NAMED('CA_part'), ALL);

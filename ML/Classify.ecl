@@ -1318,6 +1318,10 @@ Configuration Input
     EXPORT Model(DATASET(Types.NumericField) mod) := FUNCTION
       RETURN ML.Ensemble.FromDiscreteForest(mod);
     END;
+    EXPORT VariableImportanceD(DATASET(Types.NumericField) mod)  := FUNCTION
+      rfModel:= ML.Ensemble.FromDiscreteForest(mod);
+      RETURN ML.Ensemble.VariableImportanceD(rfModel);
+    END;
     // Transform NumericFiled "mod" to Ensemble.gSplitC "binary tree nodes" model format using field map modelC_Map
     EXPORT ModelC(DATASET(Types.NumericField) mod) := FUNCTION
       RETURN ML.Ensemble.FromContinuosForest(mod);

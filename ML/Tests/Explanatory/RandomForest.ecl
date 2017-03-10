@@ -55,9 +55,9 @@ OUTPUT(indepData, NAMED('indepData'), ALL);
 OUTPUT(depData, NAMED('depData'), ALL);
 */
 
-// Generating a random forest of 100 trees selecting 7 features for splits using impurity:=1.0 and max depth:= 100. 
-//learner := Classify.RandomForest(100, 7, 1.0, 100);         // GiniSplit = TRUE (default) uses Gini Impurity as split criteria
-learner := ML.Classify.RandomForest(100, 3, 1.0, 100, FALSE);  // GiniSplit = FALSE uses Info Gain Ratio as split criteria
+// Generating a random forest of 100 trees selecting 5 features for splits using impurity:=1.0 and max depth:= 35. 
+//learner := Classify.RandomForest(100, 5, 1.0, 35, TRUE);         // GiniSplit = TRUE (default) uses Gini Impurity as split criteria
+learner := ML.Classify.RandomForest(100, 5, 1.0, 35, FALSE);  // GiniSplit = FALSE uses Info Gain Ratio as split criteria
 result := learner.LearnD(IndepData, DepData); // model to use when classifying
 // OUTPUT(result,NAMED('learnd_output'), ALL); // group_id represent number of tree
 model:= learner.model(result);  // transforming model to a easier way to read it
@@ -66,6 +66,8 @@ OUTPUT(SORT(model, group_id, node_id, value), NAMED('model_ouput') );
 //OUTPUT(SORT(model, group_id, node_id, value), NAMED('model_ouput_all'), ALL);
 // To review the whole model use following line instead:
 //OUTPUT(SORT(model, group_id, node_id, value),, '~user::rdnforest_model', OVERWRITE); // stored in cluster
+varImportance:= learner.VariableImportanceD(result);
+OUTPUT(varImportance);
 
 //Class distribution for each Instance
 ClassDist:= learner.ClassProbDistribD(IndepData, result);

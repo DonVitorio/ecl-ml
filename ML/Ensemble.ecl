@@ -1,8 +1,8 @@
 ﻿IMPORT ML;
 IMPORT ML.Types AS Types;
 EXPORT Ensemble := MODULE
-  EXPORT modelD_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'new_node_id','5'},{'support','6'},{'group_id','7'}], {STRING orig_name; STRING assigned_name;});
-  EXPORT STRING modelD_fields := 'node_id,level,number,value,new_node_id,support,group_id';	// need to use field map to call FromField later
+  EXPORT modelD_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'new_node_id','5'},{'support','6'},{'group_id','7'},{'deltaimp','8'}], {STRING orig_name; STRING assigned_name;});
+  EXPORT STRING modelD_fields := 'node_id,level,number,value,new_node_id,support,group_id,deltaimp';	// need to use field map to call FromField later
   EXPORT modelC_Map :=	DATASET([{'id','ID'},{'node_id','1'},{'level','2'},{'number','3'},{'value','4'},{'high_fork','5'},{'new_node_id','6'},{'group_id','7'}], {STRING orig_name; STRING assigned_name;});
   EXPORT STRING modelC_fields := 'node_id,level,number,value,high_fork,new_node_id,group_id';	// need to use field map to call FromField later
 
@@ -10,6 +10,7 @@ EXPORT Ensemble := MODULE
   EXPORT gSplitD := RECORD
     ML.Trees.SplitD;
     Types.t_Count       group_id;     // Tree Number Identifier
+    REAL4               deltaImp:= 0; // Decrease in Impurity 
   END;
   EXPORT gSplitC := RECORD
     ML.Trees.SplitC;
@@ -23,6 +24,7 @@ EXPORT Ensemble := MODULE
     Types.t_Discrete    depend;       // Instance Dependant value
     Types.t_Count       support:=0;   // Support during learning
     Types.t_Count       group_id;     // Tree Number Identifier
+    REAL4               deltaImp:= 0; // Decrease in Impurity 
   END;
   SHARED gNodeThin:= RECORD
     Types.t_Count       group_id  := 0;
@@ -178,12 +180,22 @@ EXPORT Ensemble := MODULE
       gini_per  := TABLE(prop, {group_id, node_id, number, value, tcnt := SUM(GROUP,Cnt),val := 1-SUM(GROUP,Prop*Prop)}, group_id, node_id, number, value, LOCAL);
       gini      := TABLE(gini_per, {group_id, node_id, number, gini_t := SUM(GROUP,tcnt*val)/SUM(GROUP,tcnt)}, group_id, node_id, number, LOCAL);
       // Selecting the split with minimum Gini Impurity per node
-      splits    := DEDUP(SORT(gini, group_id, node_id, gini_t, LOCAL), group_id, node_id, LOCAL);
+      splits0   := DEDUP(SORT(gini, group_id, node_id, gini_t, LOCAL), group_id, node_id, LOCAL);
+      g_delta := RECORD
+        splits0;
+        REAL4 deltaGini; // Proportion pertaining to its dependent value
+      END;
+      splits    := JOIN(splits0, Purities, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id, TRANSFORM(g_delta, SELF.deltaGini:= RIGHT.gini - LEFT.gini_t, SELF:= LEFT), LOCAL);
       // new split nodes found
-      new_spl0  := JOIN(aggBrCum, splits, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id AND LEFT.number = RIGHT.number, TRANSFORM(LEFT), LOCAL);
+      aggBrCum_delta := RECORD
+        aggBrCum;
+        REAL4 deltaGini; // Proportion pertaining to its dependent value
+      END;
+      new_spl0  := JOIN(aggBrCum, splits, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id AND LEFT.number = RIGHT.number, 
+                      TRANSFORM(aggBrCum_delta, SELF.deltaGini:= RIGHT.deltaGini, SELF:= LEFT), LOCAL);
       node_base := MAX(nodes, node_id);
       new_split := PROJECT(new_spl0, TRANSFORM(gNodeInstDisc, SELF.value:= node_base + COUNTER; SELF.depend:= LEFT.value;
-                                               SELF.level:= p_level; SELF.support:= LEFT.TCnt; SELF := LEFT; SELF := [];));
+                                               SELF.level:= p_level; SELF.support:= LEFT.TCnt; SELF.deltaImp:= LEFT.deltaGini, SELF := LEFT; SELF := [];));
       // reasigning instances to new nodes
       node_inst := JOIN(this_set, new_split, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.depend,
                       TRANSFORM(gNodeInstDisc, SELF.node_id:=RIGHT.value, SELF.level:= RIGHT.level +1, SELF.value:= LEFT.depend, SELF:= LEFT ), LOOKUP);
@@ -295,12 +307,17 @@ EXPORT Ensemble := MODULE
       gainRatio := JOIN(gain, csplit, LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number,
                       TRANSFORM(gainRateRec, SELF.gain_ratio:= LEFT.gain/RIGHT.split_info, SELF:= LEFT), LOCAL);
       // Selecting the split with max Info Gain Ratio per node
-      split     := DEDUP(SORT(gainRatio, group_id, node_id, -gain_ratio, LOCAL), group_id, node_id, LOCAL);
+      splits    := DEDUP(SORT(gainRatio, group_id, node_id, -gain_ratio, LOCAL), group_id, node_id, LOCAL);
       // new split nodes found
-      new_spl0  := JOIN(child_tot, split, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id AND LEFT.number = RIGHT.number, TRANSFORM(LEFT), LOCAL);
+      child_tot_delta := RECORD
+        child_tot;
+        REAL4 gain_ratio; // Proportion pertaining to its dependent value
+      END;
+      new_spl0  := JOIN(child_tot, splits, LEFT.group_id = RIGHT.group_id AND LEFT.node_id = RIGHT.node_id AND LEFT.number = RIGHT.number, 
+                      TRANSFORM(child_tot_delta, SELF.gain_ratio:= RIGHT.gain_ratio, SELF:= LEFT), LOCAL);
       node_base := MAX(nodes, node_id);
       new_split := PROJECT(new_spl0, TRANSFORM(gNodeInstDisc, SELF.value:= node_base + COUNTER; SELF.depend:= LEFT.value;
-                                               SELF.level:= p_level; SELF.support:= LEFT.tot; SELF := LEFT; SELF := [];));
+                                               SELF.level:= p_level; SELF.support:= LEFT.tot; SELF.deltaImp:= LEFT.gain_ratio; SELF := LEFT; SELF := [];));
       // reasigning instances to new nodes
       node_inst := JOIN(this_set, new_split, LEFT.group_id = RIGHT.group_id AND LEFT.node_id=RIGHT.node_id AND LEFT.number=RIGHT.number AND LEFT.value=RIGHT.depend,
                       TRANSFORM(gNodeInstDisc, SELF.node_id:=RIGHT.value, SELF.level:= RIGHT.level +1, SELF.value:= LEFT.depend, SELF:= LEFT ), LOCAL);
@@ -327,6 +344,12 @@ EXPORT Ensemble := MODULE
     ML.AppendID(nodes, id, model);
     ML.ToField(model, out_model, id, modelD_fields);
     RETURN out_model;
+  END;
+  
+  EXPORT VariableImportanceD(DATASET(gSplitD) nodes) := FUNCTION
+    modelagg:= TABLE(nodes(number>0), {group_id, number, deltasum:= SUM(GROUP, support * deltaimp)}, group_id, number);
+    numberagg:= TABLE(modelagg, {number, deltatot:= SUM(GROUP, deltasum)}, number);
+    RETURN (SORT(numberagg, -deltatot));
   END;
   // Function that locates instances into the deepest branch nodes (split) based on their attribute values
   EXPORT gSplitInstancesD(DATASET(gSplitD) mod, DATASET(Types.DiscreteField) Indep) := FUNCTION
