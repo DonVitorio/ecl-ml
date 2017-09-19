@@ -31,18 +31,21 @@ END;
 */
 EXPORT Compare(DATASET(Types.DiscreteField) Dep,DATASET(l_result) Computed) := MODULE
   DiffRec := RECORD
+    Types.t_RecordID            id;  // Instance ID
     Types.t_FieldNumber classifier;  // The classifier in question (value of 'number' on outcome data)
-    Types.t_Discrete  c_actual;      // The value of c provided
-    Types.t_Discrete  c_modeled;     // The value produced by the classifier
-    Types.t_FieldReal score;         // Score allocated by classifier
+    Types.t_Discrete      c_actual;  // The original instance's class
+    Types.t_Discrete     c_modeled;  // The predicted instance's class
+    Types.t_FieldReal   conf_score;  // Score allocated by classifier
   END;
-  DiffRec  notediff(Computed le,Dep ri) := TRANSFORM
-    SELF.c_actual := ri.value;
-    SELF.c_modeled := le.value;
-    SELF.score := le.conf;
+  DiffRec  notediff(Computed le, Dep ri) := TRANSFORM
+    SELF.id         := ri.id;
+    SELF.c_actual   := ri.value;
+    SELF.c_modeled  := le.value;
+    SELF.conf_score := le.conf;
     SELF.classifier := ri.number;
   END;
   SHARED J := JOIN(Computed,Dep,LEFT.id=RIGHT.id AND LEFT.number=RIGHT.number,notediff(LEFT,RIGHT));
+  EXPORT Instances_OrigPredited:= SORT(J, classifier, id);
   // Building the Confusion Matrix
   SHARED ConfMatrix_Rec := RECORD
     Types.t_FieldNumber classifier; // The classifier in question (value of 'number' on outcome data)
@@ -72,6 +75,15 @@ EXPORT Compare(DATASET(Types.DiscreteField) Dep,DATASET(l_result) Computed) := M
   EXPORT RecallByClass := SORT(TABLE(CrossAssignments, {classifier, c_actual, tp_rate := SUM(GROUP,IF(c_actual=c_modeled,cnt,0))/SUM(GROUP,cnt)}, classifier, c_actual, FEW), classifier, c_actual);
 //PrecisionByClass, returns the proportion of instances classified as a class that really belong to this class: TP /(TP + FP).
   EXPORT PrecisionByClass := SORT(TABLE(CrossAssignments,{classifier,c_modeled, Precision := SUM(GROUP,IF(c_actual=c_modeled,cnt,0))/SUM(GROUP,cnt)},classifier,c_modeled,FEW), classifier, c_modeled);
+//F-score, returns a weighted average of the precision and recall, where an F-score reaches its best value at 1 and worst at 0, also known as F-measure.
+  SHARED FScoreMatrix_Rec := RECORD
+    Types.t_FieldNumber classifier; // The classifier in question (value of 'number' on outcome data)
+    Types.t_Discrete    class;      // The class of interest
+    Types.t_FieldReal   f_score; // F-Score
+  END;  
+  EXPORT FScoreByClass(REAL Beta = 1.0) := JOIN(PrecisionByClass, RecallByClass, LEFT.classifier = RIGHT.classifier AND LEFT.c_modeled = RIGHT.c_actual,
+                            TRANSFORM(FScoreMatrix_Rec, SELF.class:= LEFT.c_modeled, 
+                            SELF.f_score:= (1 + Beta*Beta)*(LEFT.Precision * RIGHT.tp_rate)/((Beta*Beta * LEFT.Precision) + RIGHT.tp_rate), SELF:= LEFT));
 //FP_Rate_ByClass, it returns the proportion of instances not belonging to a class that were incorrectly classified as this class,
 //                 also known as False Positive rate FP / (FP + TN).
   FalseRate_rec := RECORD

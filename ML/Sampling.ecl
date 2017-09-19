@@ -109,6 +109,18 @@ EXPORT Sampling := MODULE
 		RETURN GeneratedData(ds_ids, originalData);
 	END;
   
+	EXPORT RndSampleWithoutReplaceDis(DATASET(Types.DiscreteField) originalData, Types.t_Discrete pctSize = 100, Types.t_RecordID baseId = 0) := FUNCTION
+		numIdx 	:= MIN(originalData, number);
+		dsIds 	:= originalData(number = numIdx);
+		origSize := COUNT(dsIds);
+		dRnd := PROJECT(dsIds, AddDisRandom(LEFT));
+		dRndSorted := SORT(dRnd, rnd);
+		sampleSize := MIN(origSize, ROUND(origSize*pctSize/100));
+		ds_raw := CHOOSEN(dRndSorted, sampleSize);
+		ds_ids := PROJECT(ds_raw, TRANSFORM(idListRec, SELF.id := baseId + COUNTER, SELF.oldId := LEFT.id));
+		RETURN JOIN(originalData, ds_ids, LEFT.id = RIGHT.oldId, GetDisRecords(LEFT, RIGHT), LOOKUP, MANY);
+	END;
+  
 	EXPORT RndSampleSplitNum (DATASET(Types.NumericField) origData, Types.t_Discrete pctSplit = 100) := MODULE
 		numIdx 	          := MIN(origData, number);
 		dsIds        	    := origData(number = numIdx);
@@ -159,10 +171,10 @@ EXPORT Sampling := MODULE
     EXPORT RightSplit := RightSplitBaseId(0);
 	END;
   
-  EXPORT NFoldDiscrete(DATASET(Types.DiscreteField) originalData, Types.t_Discrete num_part) := MODULE
-    distribIdx 	:= max(originalData, number);
+  EXPORT NFoldDiscrete(DATASET(Types.DiscreteField) originalData, Types.t_Discrete num_part, BOOLEAN stratify = TRUE, INTEGER4 classIdx = -1) := MODULE
+    distribIdx 	:= IF(stratify AND classIdx < 0, max(originalData, number), classIdx);
     dRnd := PROJECT(originalData(number = distribIdx), AddDisRandom(LEFT));
-    dRndSorted := SORT(dRnd,rnd);
+    dRndSorted := IF(stratify, SORT(dRnd, value, rnd) , SORT(dRnd, rnd));
     SHARED ds_parts := PROJECT(dRndSorted, TRANSFORM(idFoldRec, SELF.Fold := COUNTER%num_part + 1, SELF:= LEFT));
     EXPORT NFoldList:= SORT(ds_parts, id);
     EXPORT FoldNDS(Types.t_Discrete num_fold, Types.t_RecordID baseId = 0) := FUNCTION

@@ -2,7 +2,7 @@
 IMPORT ML;
 IMPORT ML.Types AS Types;
 EXPORT AdultDS := MODULE 
-	 SHARED AdultRecord  := RECORD 
+	 EXPORT AdultRecord  := RECORD 
 		 Types.t_FieldNumber id;
 		 Types.t_FieldNumber Age;
 		 Types.t_FieldNumber WorkClass;
