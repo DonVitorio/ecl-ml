@@ -64,7 +64,7 @@ trainer3:= ML.Classify.DecisionTree.C45(TRUE, 3, 0.67449); // Pruned using 3 fol
 model3:= trainer3.LearnD(Indep, Dep);
 
 OUTPUT(model1, NAMED('Model1'));
-OUTPUT(SORT(trainer1.Model(model1), level, node_id), NAMED('DecTree_1'), ALL);
+OUTPUT(SORT(trainer1.Model(model1), level, node_id, value), NAMED('DecTree_1'), ALL);
 OUTPUT(model2, NAMED('Model2'));
 OUTPUT(SORT(trainer2.Model(model2), level, node_id), NAMED('DecTree_2'), ALL);
 OUTPUT(model2b, NAMED('Model2b'));
